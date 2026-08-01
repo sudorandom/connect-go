@@ -76,7 +76,8 @@ func (h *Handler) HandleSession(ctx context.Context, session *webtransport.Sessi
 	}
 }
 
-func (h *Handler) handleStream(ctx context.Context, session *webtransport.Session, stream *webtransport.Stream) {
+func (h *Handler) handleStream(sessionCtx context.Context, session *webtransport.Session, stream *webtransport.Stream) {
+	ctx := sessionCtx
 	defer func() {
 		_ = stream.Close()
 		stream.CancelRead(0)
@@ -261,7 +262,8 @@ func (ss *serverStream) sendHeaders() error {
 		header.Set("Connect-Accept-Encoding", ss.opts.acceptCompression)
 	}
 
-	protoHeaders := headersToProto(header)
+	protoHeaders, cleanup := headersToProto(header)
+	defer cleanup()
 	data, err := proto.Marshal(protoHeaders)
 	if err != nil {
 		return connect.Errorf(connect.CodeInternal, "failed to marshal response headers: %v", err)

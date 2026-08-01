@@ -19,11 +19,37 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
 
 	"connectrpc.com/connect/v2"
 	"connectrpc.com/connect/v2/internal/connectprotocol"
 	framev1 "connectrpc.com/connect/v2/internal/gen/connect/frame/v1"
 )
+
+var headersProtoPool = sync.Pool{
+	New: func() any {
+		return &framev1.Headers{}
+	},
+}
+
+var headerFieldPool = sync.Pool{
+	New: func() any {
+		return &framev1.Header{}
+	},
+}
+
+func getHeaderField(key string, values []string) *framev1.Header {
+	h := headerFieldPool.Get().(*framev1.Header)
+	h.Key = key
+	h.Values = values
+	return h
+}
+
+func putHeaderField(h *framev1.Header) {
+	h.Key = ""
+	h.Values = nil
+	headerFieldPool.Put(h)
+}
 
 // Envelope flag constants.
 const (
@@ -50,15 +76,27 @@ func errorForWire(err error) *connect.Error {
 	return connect.Errorf(connect.CodeUnknown, "").WithCause(err)
 }
 
-func headersToProto(h http.Header) *framev1.Headers {
-	fields := make([]*framev1.Header, 0, len(h))
-	for k, vs := range h {
-		fields = append(fields, &framev1.Header{
-			Key:    k,
-			Values: vs,
-		})
+func headersToProto(h http.Header) (*framev1.Headers, func()) {
+	headersProto := headersProtoPool.Get().(*framev1.Headers)
+	if cap(headersProto.Fields) < len(h) {
+		headersProto.Fields = make([]*framev1.Header, 0, len(h))
+	} else {
+		headersProto.Fields = headersProto.Fields[:0]
 	}
-	return &framev1.Headers{Fields: fields}
+
+	for k, vs := range h {
+		headersProto.Fields = append(headersProto.Fields, getHeaderField(k, vs))
+	}
+
+	cleanup := func() {
+		for _, f := range headersProto.Fields {
+			putHeaderField(f)
+		}
+		headersProto.Fields = headersProto.Fields[:0]
+		headersProtoPool.Put(headersProto)
+	}
+
+	return headersProto, cleanup
 }
 
 func protoToHeaders(protoHeaders *framev1.Headers) http.Header {

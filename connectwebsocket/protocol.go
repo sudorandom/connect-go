@@ -18,15 +18,44 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"sync"
 )
 
-const envelopeLen = 5
+const (
+	envelopeLen = 5
+	maxPooledBufferSize = 64 * 1024 // 64 KiB
+)
+
+var bufferPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, maxPooledBufferSize)
+		return &b
+	},
+}
+
+func getBuffer(size int) ([]byte, *[]byte) {
+	if size <= maxPooledBufferSize {
+		p := bufferPool.Get().(*[]byte)
+		return (*p)[:size], p
+	}
+	b := make([]byte, size)
+	return b, nil
+}
+
+func putBuffer(p *[]byte) {
+	if p != nil {
+		bufferPool.Put(p)
+	}
+}
 
 func writeEnvelope(writer io.Writer, flag uint8, payload []byte) error {
 	if uint64(len(payload)) > 4294967295 {
 		return errors.New("connectwebsocket: payload too large")
 	}
-	buf := make([]byte, envelopeLen+len(payload))
+	totalLen := envelopeLen + len(payload)
+	buf, poolPtr := getBuffer(totalLen)
+	defer putBuffer(poolPtr)
+
 	buf[0] = flag
 	binary.BigEndian.PutUint32(buf[1:5], uint32(len(payload)))
 	copy(buf[envelopeLen:], payload)
@@ -41,11 +70,16 @@ func readEnvelope(reader io.Reader) (uint8, []byte, error) {
 	}
 	flag := head[0]
 	length := binary.BigEndian.Uint32(head[1:5])
-	payload := make([]byte, length)
-	if length > 0 {
-		if _, err := io.ReadFull(reader, payload); err != nil {
-			return 0, nil, err
-		}
+	if length == 0 {
+		return flag, nil, nil
 	}
+	buf, poolPtr := getBuffer(int(length))
+	if _, err := io.ReadFull(reader, buf); err != nil {
+		putBuffer(poolPtr)
+		return 0, nil, err
+	}
+	payload := make([]byte, length)
+	copy(payload, buf)
+	putBuffer(poolPtr)
 	return flag, payload, nil
 }

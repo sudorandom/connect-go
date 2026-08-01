@@ -268,7 +268,8 @@ func (ss *serverStream) sendHeaders() error {
 		header.Set("Connect-Accept-Encoding", ss.opts.acceptCompression)
 	}
 
-	protoHeaders := headersToProto(header)
+	protoHeaders, cleanup := headersToProto(header)
+	defer cleanup()
 	data, err := proto.Marshal(protoHeaders)
 	if err != nil {
 		return connect.Errorf(connect.CodeInternal, "failed to marshal headers: %v", err)
