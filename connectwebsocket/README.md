@@ -1,5 +1,14 @@
 # connectwebsocket
 
+## Design strategy
+
+This transport reuses as much of the [Connect protocol](https://connectrpc.com/docs/protocol/) as possible. RPC
+messages use Connect codecs, per-message compression, and the standard 5-byte
+Connect envelope. Responses use Connect codes, error details, trailers, and
+the standard Connect EndStreamResponse JSON. Transport-specific protocol is
+limited to what a WebSocket cannot provide itself: an initial headers envelope
+and an explicit request end-stream envelope for half-close semantics.
+
 This package carries Connect RPCs over WebSockets. It uses one dedicated
 WebSocket connection per RPC. It does not multiplex RPCs, assign stream IDs, or
 wrap envelopes in an outer protobuf message.

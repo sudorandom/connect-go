@@ -1,5 +1,16 @@
 # connectwebtransport
 
+## Design strategy
+
+This transport reuses as much of the [Connect protocol](https://connectrpc.com/docs/protocol/) as possible. RPC
+messages use Connect codecs, per-message compression, and the standard 5-byte
+Connect envelope. Responses use Connect codes, error details, trailers, and
+the standard Connect EndStreamResponse JSON. Transport-specific protocol is
+limited to what a raw WebTransport stream cannot provide itself: an initial
+headers envelope and an optional explicit request end-stream marker for
+adapters that cannot expose QUIC half-close. Native QUIC streams are used
+instead of inventing application-level stream multiplexing.
+
 This package carries Connect RPCs over WebTransport and HTTP/3. One persistent
 WebTransport session can serve many concurrent RPCs, and every RPC gets its own
 native bidirectional QUIC stream.
