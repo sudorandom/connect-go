@@ -125,3 +125,15 @@ $(BIN)/protoc-gen-go: Makefile go.mod
 	@# The version of protoc-gen-go is determined by the version in go.mod
 	go install google.golang.org/protobuf/cmd/protoc-gen-go
 
+.PHONY: demo
+demo:
+	@echo "Generating local TLS certificates with mkcert..."
+	@cd demo && mkcert -cert-file localhost.pem -key-file localhost-key.pem localhost 127.0.0.1 ::1
+	@echo "============================================================"
+	@echo "IMPORTANT: To avoid browser certificate warnings, ensure you"
+	@echo "have installed the mkcert root CA by running:"
+	@echo "  mkcert -install"
+	@echo "============================================================"
+	@cd demo && go run main.go
+
+
