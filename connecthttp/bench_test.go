@@ -74,12 +74,16 @@ func BenchmarkConnect(b *testing.B) {
 	}}
 
 	twoMiB := strings.Repeat("a", 2*1024*1024)
-	for _, client := range clients {
-		b.Run(client.name, func(b *testing.B) {
-			opts := append(client.opts, connecthttp.WithSendCompression("gzip"))
+	for _, clientConfig := range clients {
+		b.Run(clientConfig.name, func(b *testing.B) {
 			client := pingv1connect.NewPingServiceClient(connect.NewClient(connecthttp.NewTransport(httpClient,
 				server.URL,
-				opts...,
+				clientConfig.opts...,
+			)))
+			compressedOpts := append(append([]connecthttp.Option(nil), clientConfig.opts...), connecthttp.WithSendCompression("gzip"))
+			compressedClient := pingv1connect.NewPingServiceClient(connect.NewClient(connecthttp.NewTransport(httpClient,
+				server.URL,
+				compressedOpts...,
 			)))
 
 			ctx := b.Context()
@@ -87,7 +91,7 @@ func BenchmarkConnect(b *testing.B) {
 				b.ReportAllocs()
 				b.RunParallel(func(pb *testing.PB) {
 					for pb.Next() {
-						if _, err := client.Ping(
+						if _, err := compressedClient.Ping(
 							ctx, &pingv1.PingRequest{Text: twoMiB},
 						); err != nil {
 							b.Error(err)
@@ -137,71 +141,87 @@ func BenchmarkConnect(b *testing.B) {
 				})
 			})
 			b.Run("server_stream", func(b *testing.B) {
-				b.ReportAllocs()
-				b.RunParallel(func(pb *testing.PB) {
-					for pb.Next() {
-						const (
-							upTo = 1
-						)
-						request := &pingv1.CountUpRequest{Number: upTo}
-						stream, err := client.CountUp(ctx, request)
-						if err != nil {
-							b.Error(err)
-							return
-						}
-						number := int64(0)
-						for {
-							msg, err := stream.Receive()
-							if err != nil {
-								if errors.Is(err, io.EOF) {
-									break
+				for _, benchmark := range []struct {
+					name     string
+					messages int64
+				}{
+					{name: "messages_1", messages: 1},
+					{name: "messages_1000", messages: 1000},
+				} {
+					b.Run(benchmark.name, func(b *testing.B) {
+						b.ReportAllocs()
+						b.RunParallel(func(pb *testing.PB) {
+							for pb.Next() {
+								request := &pingv1.CountUpRequest{Number: benchmark.messages}
+								stream, err := client.CountUp(ctx, request)
+								if err != nil {
+									b.Error(err)
+									return
 								}
-								b.Fatal(err)
+								number := int64(0)
+								for {
+									msg, err := stream.Receive()
+									if err != nil {
+										if errors.Is(err, io.EOF) {
+											break
+										}
+										b.Fatal(err)
+									}
+									number++
+									if got := msg.GetNumber(); got != number {
+										b.Errorf("expected %d, got %d", number, got)
+									}
+								}
+								if number != benchmark.messages {
+									b.Errorf("expected %d, got %d", benchmark.messages, number)
+								}
 							}
-							number++
-							if got := msg.GetNumber(); got != number {
-								b.Errorf("expected %d, got %d", number, got)
-							}
-						}
-						if number != upTo {
-							b.Errorf("expected %d, got %d", upTo, number)
-						}
-					}
-				})
+						})
+						b.ReportMetric(float64(b.Elapsed().Nanoseconds())/(float64(b.N)*float64(benchmark.messages)), "ns/message")
+					})
+				}
 			})
 			b.Run("bidi_stream", func(b *testing.B) {
-				b.ReportAllocs()
-				b.RunParallel(func(pb *testing.PB) {
-					for pb.Next() {
-						const (
-							upTo = 1
-						)
-						stream, err := client.CumSum(ctx)
-						if err != nil {
-							b.Error(err)
-						}
-						number := int64(1)
-						for ; number <= upTo; number++ {
-							if err := stream.Send(&pingv1.CumSumRequest{Number: number}); err != nil {
-								b.Error(err)
-							}
+				for _, benchmark := range []struct {
+					name       string
+					roundTrips int64
+				}{
+					{name: "round_trips_1", roundTrips: 1},
+					{name: "round_trips_1000", roundTrips: 1000},
+				} {
+					b.Run(benchmark.name, func(b *testing.B) {
+						b.ReportAllocs()
+						b.RunParallel(func(pb *testing.PB) {
+							for pb.Next() {
+								stream, err := client.CumSum(ctx)
+								if err != nil {
+									b.Error(err)
+								}
+								number := int64(1)
+								for ; number <= benchmark.roundTrips; number++ {
+									if err := stream.Send(&pingv1.CumSumRequest{Number: number}); err != nil {
+										b.Error(err)
+									}
 
-							msg, err := stream.Receive()
-							if err != nil {
-								b.Error(err)
+									msg, err := stream.Receive()
+									if err != nil {
+										b.Error(err)
+									}
+									if got, expected := msg.GetSum(), number*(number+1)/2; got != expected {
+										b.Errorf("expected %d, got %d", expected, got)
+									}
+								}
+								if err := stream.CloseSend(); err != nil {
+									b.Error(err)
+								}
+								if err := stream.Close(); err != nil {
+									b.Error(err)
+								}
 							}
-							if got, expected := msg.GetSum(), number*(number+1)/2; got != expected {
-								b.Errorf("expected %d, got %d", expected, got)
-							}
-						}
-						if err := stream.CloseSend(); err != nil {
-							b.Error(err)
-						}
-						if err := stream.Close(); err != nil {
-							b.Error(err)
-						}
-					}
-				})
+						})
+						b.ReportMetric(float64(b.Elapsed().Nanoseconds())/(float64(b.N)*float64(benchmark.roundTrips)), "ns/roundtrip")
+					})
+				}
 			})
 		})
 	}

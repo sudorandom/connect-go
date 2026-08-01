@@ -17,6 +17,7 @@ package connectwebtransport
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"maps"
 	"net/http"
@@ -27,6 +28,7 @@ import (
 
 	"connectrpc.com/connect/v2"
 	"connectrpc.com/connect/v2/connectproto"
+	"connectrpc.com/connect/v2/internal/connectprotocol"
 	framev1 "connectrpc.com/connect/v2/internal/gen/connect/frame/v1"
 	"github.com/quic-go/webtransport-go"
 	"google.golang.org/protobuf/proto"
@@ -46,7 +48,7 @@ func NewHandler(server *connect.Server, opts ...Option) *Handler {
 	// Defaults
 	sOpts.codecs[connect.CodecNameProto] = connectproto.NewBinaryCodec()
 	sOpts.codecs[connect.CodecNameJSON] = connectproto.NewJSONCodec()
-	compMap, compNames := defaultCompressors()
+	compMap, compNames := connectprotocol.DefaultCompressors()
 	sOpts.compressors = compMap
 	sOpts.compressorNames = compNames
 
@@ -65,7 +67,10 @@ func (h *Handler) HandleSession(ctx context.Context, session *webtransport.Sessi
 	for {
 		stream, err := session.AcceptStream(ctx)
 		if err != nil {
-			return
+			if ctx.Err() != nil || errors.Is(err, context.Canceled) {
+				return
+			}
+			continue
 		}
 		go h.handleStream(ctx, session, stream)
 	}
@@ -164,8 +169,7 @@ func (h *Handler) handleStream(ctx context.Context, session *webtransport.Sessio
 	}
 	trailers := make(http.Header)
 	maps.Insert(trailers, callInfo.ResponseTrailer().All())
-	end := endStreamToProto(endErr, trailers)
-	endPayload, marshalErr := proto.Marshal(end)
+	endPayload, marshalErr := marshalEndStream(endErr, trailers)
 	if marshalErr != nil {
 		endPayload = nil
 	}
@@ -245,17 +249,13 @@ func (ss *serverStream) sendHeaders() error {
 	}
 	header.Set("Content-Type", "application/connect+"+ss.codec.Name())
 
-	// Negotiate compression
-	acceptEncoding := ss.callInfo.RequestHeader().Get("Connect-Accept-Encoding")
-	if acceptEncoding != "" {
-		for part := range strings.SplitSeq(acceptEncoding, ",") {
-			part = strings.TrimSpace(part)
-			if comp, ok := ss.opts.compressors[part]; ok {
-				ss.responseCompressor = comp
-				header.Set("Connect-Content-Encoding", part)
-				break
-			}
-		}
+	encoding, compressor := connectprotocol.NegotiateCompression(
+		ss.callInfo.RequestHeader().Get("Connect-Accept-Encoding"),
+		ss.opts.compressors,
+	)
+	if compressor != nil {
+		ss.responseCompressor = compressor
+		header.Set("Connect-Content-Encoding", encoding)
 	}
 	if ss.opts.acceptCompression != "" {
 		header.Set("Connect-Accept-Encoding", ss.opts.acceptCompression)

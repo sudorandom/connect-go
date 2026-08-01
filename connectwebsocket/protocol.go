@@ -26,19 +26,12 @@ func writeEnvelope(writer io.Writer, flag uint8, payload []byte) error {
 	if uint64(len(payload)) > 4294967295 {
 		return errors.New("connectwebsocket: payload too large")
 	}
-	var head [envelopeLen]byte
-	head[0] = flag
-	//nolint:gosec // envelope length is bounded
-	binary.BigEndian.PutUint32(head[1:5], uint32(len(payload)))
-	if _, err := writer.Write(head[:]); err != nil {
-		return err
-	}
-	if len(payload) > 0 {
-		if _, err := writer.Write(payload); err != nil {
-			return err
-		}
-	}
-	return nil
+	buf := make([]byte, envelopeLen+len(payload))
+	buf[0] = flag
+	binary.BigEndian.PutUint32(buf[1:5], uint32(len(payload)))
+	copy(buf[envelopeLen:], payload)
+	_, err := writer.Write(buf)
+	return err
 }
 
 func readEnvelope(reader io.Reader) (uint8, []byte, error) {

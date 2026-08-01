@@ -26,10 +26,11 @@ import (
 
 	connect "connectrpc.com/connect/v2"
 	"connectrpc.com/connect/v2/connecthttp"
-	"connectrpc.com/connect/v2/connectwebtransport"
 	"connectrpc.com/connect/v2/connectwebsocket"
+	"connectrpc.com/connect/v2/connectwebtransport"
 	elizav1 "connectrpc.com/connect/v2/internal/gen/connect/eliza/v1"
 	"connectrpc.com/connect/v2/internal/gen/connect/eliza/v1/elizav1connect"
+	"github.com/coder/websocket"
 	"github.com/quic-go/quic-go/http3"
 	"github.com/quic-go/webtransport-go"
 )
@@ -64,10 +65,14 @@ func (elizaServer) Converse(ctx context.Context, stream elizav1connect.ElizaServ
 }
 
 func (elizaServer) Introduce(ctx context.Context, req *elizav1.IntroduceRequest, stream elizav1connect.ElizaServiceIntroduceServerStream) error {
-	log.Printf("[Go Eliza] Introduce: %s", req.Name)
+	protocol := "unknown transport"
+	if callInfo, ok := connect.CallInfoForServerContext(ctx); ok {
+		protocol = callInfo.Protocol
+	}
+	log.Printf("[Go Eliza] Introduce over %s: %s", protocol, req.Name)
 	sentences := []string{
-		"Hi " + req.Name + ", I'm Eliza over WebTransport!",
-		"I am running on a Go backend using the connectwebtransport package.",
+		"Hi " + req.Name + ", I'm Eliza over " + protocol + "!",
+		"This RPC is running on the Go backend using " + protocol + ".",
 		"How can I help you today?",
 	}
 	for _, s := range sentences {
@@ -92,12 +97,14 @@ func main() {
 	connectServer := connect.NewServer()
 	elizav1connect.RegisterElizaServiceHandler(connectServer, elizaServer{})
 	webtransportHandler := connectwebtransport.NewHandler(connectServer)
-	websocketHandler := connectwebsocket.NewHandler(connectServer)
+	websocketHandler := connectwebsocket.NewHandler(connectServer, connectwebsocket.WithAcceptOptions(&websocket.AcceptOptions{
+		InsecureSkipVerify: true,
+	}))
 
 	// 2. Setup WebTransport H3 server & TCP HTTP/2 Server
 	mux := http.NewServeMux()
 	connecthttp.Mount(mux, connectServer)
-	
+
 	mux.Handle("/websocket", websocketHandler)
 
 	// Handle standard Connect HTTP traffic (unary/gRPC/etc) with CORS
@@ -110,7 +117,7 @@ func main() {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		
+
 		mux.ServeHTTP(w, r)
 	})
 

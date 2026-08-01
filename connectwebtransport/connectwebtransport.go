@@ -15,14 +15,13 @@
 package connectwebtransport
 
 import (
-	"compress/gzip"
 	"context"
 	"errors"
-	"io"
 	"strings"
 
 	"connectrpc.com/connect/v2"
 	"connectrpc.com/connect/v2/connectproto"
+	"connectrpc.com/connect/v2/internal/connectprotocol"
 	"github.com/quic-go/webtransport-go"
 )
 
@@ -134,22 +133,6 @@ func WithSendMaxBytes(maxBytes int) Option {
 	})
 }
 
-// Default gzip compressor.
-type gzipCompressor struct{}
-
-func (gzipCompressor) Name() string { return connect.CompressionNameGzip }
-func (gzipCompressor) Compress(w io.Writer) (io.WriteCloser, error) {
-	return gzip.NewWriter(w), nil
-}
-func (gzipCompressor) Decompress(r io.Reader) (io.ReadCloser, error) {
-	return gzip.NewReader(r)
-}
-
-func defaultCompressors() (map[string]connect.Compressor, []string) {
-	c := gzipCompressor{}
-	return map[string]connect.Compressor{c.Name(): c}, []string{c.Name()}
-}
-
 type transport struct {
 	session *webtransport.Session
 	opts    transportOptions
@@ -166,7 +149,7 @@ func NewTransport(session *webtransport.Session, opts ...Option) connect.Transpo
 	// Defaults
 	tOpts.codecs[connect.CodecNameProto] = connectproto.NewBinaryCodec()
 	tOpts.codecs[connect.CodecNameJSON] = connectproto.NewJSONCodec()
-	compMap, compNames := defaultCompressors()
+	compMap, compNames := connectprotocol.DefaultCompressors()
 	tOpts.compressors = compMap
 	tOpts.compressorNames = compNames
 

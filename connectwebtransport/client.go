@@ -33,12 +33,12 @@ import (
 )
 
 type clientStream struct {
-	spec       connect.Spec
-	stream     *webtransport.Stream
-	callInfo   *connect.CallInfo
-	opts       transportOptions
-	codec      connect.Codec
-	ctx        context.Context
+	spec     connect.Spec
+	stream   *webtransport.Stream
+	callInfo *connect.CallInfo
+	opts     transportOptions
+	codec    connect.Codec
+	ctx      context.Context
 
 	sendHeadersOnce sync.Once
 	sendHeadersErr  error
@@ -170,11 +170,10 @@ func (cs *clientStream) Receive(msg any) error {
 
 	if flag == flagEnvelopeEndStream {
 		cs.rxEnd = true
-		var end framev1.EndStream
-		if err := proto.Unmarshal(payload, &end); err != nil {
+		cerr, trailers, err := unmarshalEndStream(payload)
+		if err != nil {
 			return connect.Errorf(connect.CodeInternal, "failed to unmarshal end stream envelope: %v", err)
 		}
-		cerr, trailers := protoToEndStream(&end)
 		if cs.callInfo != nil && cs.callInfo.ResponseTrailer() != nil {
 			for k, vs := range trailers {
 				cs.callInfo.ResponseTrailer().SetValues(k, vs)
@@ -258,11 +257,10 @@ func (cs *clientStream) readUnaryEndStream() error {
 		return connect.Errorf(connect.CodeInternal, "protocol error: expected end stream envelope after unary response message, got 0x%x", nextFlag)
 	}
 	cs.rxEnd = true
-	var end framev1.EndStream
-	if err := proto.Unmarshal(nextPayload, &end); err != nil {
+	cerr, trailers, err := unmarshalEndStream(nextPayload)
+	if err != nil {
 		return connect.Errorf(connect.CodeInternal, "failed to unmarshal end stream envelope: %v", err)
 	}
-	cerr, trailers := protoToEndStream(&end)
 	if cs.callInfo != nil && cs.callInfo.ResponseTrailer() != nil {
 		for k, vs := range trailers {
 			cs.callInfo.ResponseTrailer().SetValues(k, vs)

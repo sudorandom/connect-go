@@ -25,11 +25,12 @@ import (
 
 	"connectrpc.com/connect/v2"
 	"connectrpc.com/connect/v2/internal/bufferpool"
+	"connectrpc.com/connect/v2/internal/connectprotocol"
 )
 
 // flagEnvelopeCompressed indicates that the data is compressed. It has the
 // same meaning in the gRPC-Web, gRPC-HTTP2, and Connect protocols.
-const flagEnvelopeCompressed = 0b00000001
+const flagEnvelopeCompressed = connectprotocol.FlagEnvelopeCompressed
 
 var errSpecialEnvelope = connect.Errorf(
 	connect.CodeUnknown,

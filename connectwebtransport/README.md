@@ -1,21 +1,18 @@
 # connectwebtransport
 
-This package implements a Connect transport for running RPC calls over **WebTransport** (via HTTP/3 / QUIC).
+This package carries Connect RPCs over WebTransport and HTTP/3. One persistent
+WebTransport session can serve many concurrent RPCs, and every RPC gets its own
+native bidirectional QUIC stream.
 
-## 🚀 Usage
+## Usage
 
-WebTransport is establishing a single persistent connection (session) over HTTP/3, and then multiplexing individual RPC calls over dedicated streams inside that session.
-
-### Server Example
+Server:
 
 ```go
 connectServer := connect.NewServer()
 pingv1connect.RegisterPingServiceHandler(connectServer, pingServer{})
+handler := connectwebtransport.NewHandler(connectServer)
 
-// Wrap the Connect server in a WebTransport handler
-webtransportHandler := connectwebtransport.NewHandler(connectServer)
-
-// Set up standard HTTP/3 server
 wtServer := &webtransport.Server{
     H3: &http3.Server{
         Addr:      ":4433",
@@ -28,101 +25,222 @@ http.HandleFunc("/webtransport", func(w http.ResponseWriter, r *http.Request) {
     if err != nil {
         return
     }
-    webtransportHandler.HandleSession(r.Context(), session)
+    handler.HandleSession(r.Context(), session)
 })
 ```
 
-### Client Example
+Client:
 
 ```go
-dialer := &webtransport.Dialer{
-    TLSClientConfig: tlsConfig,
-}
+wtClient := &webtransport.Transport{TLSClientConfig: tlsConfig}
+defer wtClient.Close()
 
-_, session, err := dialer.Dial(ctx, "https://localhost:4433/webtransport", nil)
+_, session, err := wtClient.Dial(
+    ctx,
+    "https://example.com/webtransport",
+    nil,
+)
 if err != nil {
     log.Fatal(err)
 }
 
-// Wrap the session in a WebTransport transport
-wtTransport := connectwebtransport.NewTransport(session)
-client := pingv1connect.NewPingServiceClient(connect.NewClient(wtTransport))
+transport := connectwebtransport.NewTransport(session)
+client := pingv1connect.NewPingServiceClient(connect.NewClient(transport))
 
-// Invoke RPCs normally
 resp, err := client.Ping(ctx, &pingv1.PingRequest{Text: "hello"})
 ```
 
----
+The transport reuses the session. Each call to `NewClientStream` opens a new
+bidirectional WebTransport stream with `session.OpenStreamSync`.
 
-## 🛠️ Implementation Details
+## Protocol
 
-This package uses the **Connect streaming protocol framing methodology** to carry messages and metadata over raw WebTransport streams:
+### Session and stream mapping
 
-1. **Stream Mapping**: Each RPC call is allocated a dedicated bidirectional WebTransport stream.
-2. **Connect Envelope Framing**: All data written to the stream is prefixed with the standard Connect 5-byte envelope header: `[1-byte flag] [4-byte big-endian length]`.
-3. **Header Frame (Flag `0x04`)**: Sent exactly once at the beginning of both request and response streams containing JSON-encoded metadata (e.g., `:path`, `Content-Type`).
-4. **Data Frames (Flags `0x00`/`0x01`)**: Carry the serialized and optionally compressed message payloads (uncompressed: `0x00`, compressed: `0x01`).
-5. **End of Stream (EOS) Frame (Flag `0x02`)**: Sent by the server at the end of the response containing JSON-encoded trailers and remote execution errors, matching the Connect streaming protocol's End-Stream layout.
+The WebTransport HTTP/3 connection and session establishment are handled by
+`webtransport-go`. After the session is established, RPCs map directly to QUIC
+streams:
 
----
-
-## 📐 Architectural Alternatives Considered
-
-During design, several architectural alternatives were evaluated:
-
-### 1. New WebTransport Session (Handshake) per RPC Call
-Instead of sharing one session, the client could establish a new WebTransport session (HTTP/3 CONNECT request) for every RPC call.
-* **Why we rejected it**: Highly inefficient. Initiating a WebTransport session requires performing an HTTP/3 upgrade request and verifying security origins, adding high RTT (Round Trip Time) and CPU overhead. Sharing a session allows opening new streams in **0 RTT** with negligible resource cost.
-
-### 2. Multiplexing RPCs over a Single WebTransport Stream
-Instead of opening a new stream per RPC, we could keep a single bidirectional stream open and multiplex multiple concurrent RPC calls over it.
-* **Why we rejected it**: Multiplexing multiple calls over a single stream would require us to build a custom multiplexing layer (assigning request IDs to frames and matching responses to requests). This would effectively reinvent HTTP/2 on top of WebTransport. Mapping each RPC to a dedicated WebTransport stream lets QUIC handle flow control, stream scheduling, and loss recovery natively.
-
-### 3. Connect directly over standard HTTP/3
-Instead of WebTransport, we could just run Connect over HTTP/3 using standard HTTP clients/servers.
-* **Why we rejected it**: This is already supported by the core `connecthttp` package using standard Go HTTP/3 libraries. WebTransport is distinct because it is designed specifically for web/browser clients to establish low-latency, bidirectional connections that allow raw stream manipulation and unreliable datagrams, bypassing browser HTTP sandboxing limits.
-
----
-
-## 🎮 Running the Eliza Demo
-
-We have a unified Eliza demo app that showcases the Go `connectwebtransport` server working with the TypeScript `@connectrpc/connect-web` WebTransport client.
-
-### 1. Build the TypeScript Workspace
-Ensure you have cloned `connectrpc/connect-es` to `../connect-es` and built the workspace:
-```bash
-cd ../connect-es
-npx turbo run build
+```text
+WebTransport session
+├── bidirectional stream 0 <-> RPC A
+├── bidirectional stream 4 <-> RPC B
+└── bidirectional stream 8 <-> RPC C
 ```
 
-### 2. Regenerate Local Certificates
-Because the default certificates in the `connect-es` repository are signed by the authors' local CA, you must generate a fresh set signed by your own local `mkcert` CA so your browser can trust them:
-```bash
-cd ../connect-es/packages/example
-mkcert localhost 127.0.0.1 ::1
+QUIC assigns stream IDs and provides multiplexing, per-stream ordering,
+flow-control, cancellation, and independent loss recovery. This protocol does
+not put a stream ID in its envelopes and does not multiplex multiple RPCs over
+one QUIC stream. It also does not use a `WebSocketFrame` protobuf.
+
+### Envelope format
+
+Each bidirectional stream is an ordered byte stream containing standard 5-byte
+Connect envelopes:
+
+```text
+  0                   1                   2                   3
+  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+ +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ |     Flags     |              Payload length                   |
+ +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ | Payload len.  |                 Payload ...                   |
+ +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
 
-### 3. Start the Demo Server
-Run the unified Go HTTP/2 TCP + HTTP/3 WebTransport server:
-```bash
-cd ../connect-go-v2
-go run ./connectwebtransport/demo/main.go
+- `Flags` is one byte.
+- `Payload length` is an unsigned 32-bit big-endian integer.
+- The length counts payload bytes only and may be zero.
+- The maximum representable payload is `2^32 - 1` bytes. Configured send and
+  receive limits may impose smaller bounds.
+- Envelope boundaries are independent of QUIC write and packet boundaries;
+  receivers read exactly five header bytes followed by the declared payload.
+
+The defined flag values are:
+
+| Value | Name | Payload |
+| --- | --- | --- |
+| `0x00` | data | One uncompressed RPC message encoded with the selected codec |
+| `0x01` | compressed data | One compressed, codec-encoded RPC message |
+| `0x02` | end stream | Empty on requests when used; Connect EndStreamResponse JSON on responses |
+| `0x04` | headers | Protobuf `Headers` |
+
+These are complete flag-byte values in this protocol. Other values and a
+second headers envelope in the same direction are protocol errors.
+
+### Control payloads
+
+The headers envelope uses this binary protobuf schema, even when RPC messages
+use the JSON codec:
+
+```proto
+message Header {
+  string key = 1;
+  repeated string values = 2;
+}
+
+message Headers {
+  repeated Header fields = 1;
+}
 ```
-The server will start listening on `https://localhost:4433`.
 
-### 4. Configure Browser Trust
+The response end-stream envelope reuses the Connect protocol's standard JSON
+EndStreamResponse:
 
-Because WebTransport uses UDP (QUIC) and does not show typical TCP certificate warning pages, you must perform these browser-specific configurations to allow the connection:
+```json
+{
+  "error": {
+    "code": "unavailable",
+    "message": "service unavailable",
+    "details": [
+      {
+        "type": "google.rpc.RetryInfo",
+        "value": "BASE64_PROTOBUF_VALUE",
+        "debug": {}
+      }
+    ]
+  },
+  "metadata": {
+    "trailer-name": ["value"]
+  }
+}
+```
 
-#### 🦊 Firefox
-1. Navigate to the TCP HTTPS page: **`https://localhost:4433/`**
-2. Firefox will show a security warning. Click **Advanced -> Accept the Risk and Continue**.
-3. Firefox will now cache this exception and allow the WebTransport UDP connection.
+Both members are optional. Each detail maps directly to
+`connect.ErrorDetail`: `type` is the fully qualified protobuf message name,
+`value` is its unpadded base64-encoded binary value, and `debug` is an optional
+best-effort JSON representation. `metadata` contains response trailers as
+arrays of strings.
 
-#### 🌐 Chrome, Edge, and Brave
-1. Ensure you have installed your local root CA by running `mkcert -install`.
-2. Chromium-based browsers require a flag to allow locally trusted root CAs for WebTransport (otherwise they only accept publicly known roots):
-   * Open **`chrome://flags/#webtransport-developer-mode`**
-   * Set **WebTransport Developer Mode** to **Enabled**
-   * Relaunch the browser.
-3. Open **`https://localhost:4433`** and chat with Eliza over WebTransport!
+### Request sequence
+
+The client sends:
+
+```text
+headers, zero or more data messages, request end
+```
+
+The request headers payload must include:
+
+- `:path`: the fully qualified RPC procedure, for example
+  `/connect.ping.v1.PingService/Ping`.
+- `Content-Type`: `application/connect+proto` or
+  `application/connect+json`.
+
+It may also include application request headers and:
+
+- `Connect-Content-Encoding`: compression applied to compressed request data.
+- `Connect-Accept-Encoding`: response compression algorithms accepted by the
+  client.
+- `Connect-Timeout-Ms`: remaining RPC timeout in milliseconds.
+
+The Go client represents `CloseSend` with a QUIC stream write-side close
+(FIN), which leaves the read side available for responses. The server treats
+EOF as the end of the request. An empty `0x02` request envelope is also
+recognized as an explicit request end marker, which is useful for clients
+whose stream adapter represents half-close in-band.
+
+### Response sequence
+
+The server sends:
+
+```text
+headers, zero or more data messages, end stream, QUIC FIN
+```
+
+Response headers are always sent, including when the RPC fails before
+producing a message. They include the response `Content-Type` and, when used,
+`Connect-Content-Encoding`.
+
+The final end-stream payload is the Connect EndStreamResponse JSON described
+above. A successful RPC omits `error`; a failed RPC includes the Connect code,
+message, and error details. Application response trailers are carried in
+`metadata`. Receiving a successful end stream produces `io.EOF` for the
+caller. A QUIC FIN before a valid response end-stream envelope is a protocol
+error.
+
+Unary RPCs contain exactly one request data envelope and, on success, exactly
+one response data envelope. Client-, server-, and bidirectional-streaming RPCs
+use the same sequence with the number and timing of data envelopes appropriate
+to the method type.
+
+### Compression
+
+Compression applies independently to each RPC message, not to headers or the
+end-stream payload. An uncompressed message uses `0x00`; a compressed message
+uses `0x01` and the applicable `Connect-Content-Encoding` header names the
+algorithm. Gzip is registered by default.
+
+For responses, the server selects the first supported value from the client's
+`Connect-Accept-Encoding` list and reports it in
+`Connect-Content-Encoding`. HTTP/3 and QUIC packet processing do not change the
+envelope or compression semantics.
+
+### Cancellation and lifetime
+
+Canceling an RPC resets or closes only its QUIC stream; the WebTransport
+session and unrelated RPC streams remain usable. Closing the session ends all
+RPCs carried by it. The `Connect-Timeout-Ms` request header establishes a
+server-side deadline for the individual RPC.
+
+## Why use one QUIC stream per RPC?
+
+Opening a new WebTransport session for each call would repeat an HTTP/3
+handshake and discard QUIC's cheap native streams. Conversely, placing many
+RPCs on one WebTransport stream would require custom stream IDs, demultiplexing,
+and application-level flow control. A native stream per RPC lets QUIC provide
+these capabilities and avoids head-of-line blocking between calls.
+
+Standard Connect over HTTP/3 remains preferable when browser WebTransport APIs
+or raw bidirectional streams are unnecessary. This transport exists for cases
+where an application explicitly needs a WebTransport session.
+
+## Relationship to the Connect HTTP protocol
+
+Message serialization, per-message compression, status codes, error details,
+and the 5-byte envelope layout follow Connect semantics. The headers envelope
+is a transport-specific addition because a raw WebTransport stream does not
+itself carry HTTP request/response metadata. The end-stream flag and JSON
+payload are reused directly from the Connect streaming protocol. The overall
+exchange is still not the Connect HTTP wire protocol and is not intended for a
+normal Connect HTTP handler.

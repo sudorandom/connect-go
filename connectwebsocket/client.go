@@ -28,17 +28,16 @@ import (
 
 	"connectrpc.com/connect/v2"
 	framev1 "connectrpc.com/connect/v2/internal/gen/connect/frame/v1"
-	"github.com/quic-go/webtransport-go"
 	"google.golang.org/protobuf/proto"
 )
 
 type clientStream struct {
-	spec       connect.Spec
-	stream     *webtransport.Stream
-	callInfo   *connect.CallInfo
-	opts       transportOptions
-	codec      connect.Codec
-	ctx        context.Context
+	spec     connect.Spec
+	rwc      io.ReadWriteCloser
+	callInfo *connect.CallInfo
+	opts     transportOptions
+	codec    connect.Codec
+	ctx      context.Context
 
 	sendHeadersOnce sync.Once
 	sendHeadersErr  error
@@ -85,7 +84,7 @@ func (cs *clientStream) sendHeaders() error {
 		return connect.Errorf(connect.CodeInternal, "failed to marshal headers: %v", err)
 	}
 
-	return writeEnvelope(cs.stream, flagEnvelopeHeaders, data)
+	return writeEnvelope(cs.rwc, flagEnvelopeHeaders, data)
 }
 
 func (cs *clientStream) Send(msg any) error {
@@ -126,13 +125,13 @@ func (cs *clientStream) Send(msg any) error {
 		return connect.Errorf(connect.CodeResourceExhausted, "message size %d exceeds send limit %d", len(payload), cs.opts.sendMaxBytes)
 	}
 
-	return writeEnvelope(cs.stream, flag, payload)
+	return writeEnvelope(cs.rwc, flag, payload)
 }
 
 func (cs *clientStream) CloseSend() error {
 	var err error
 	cs.closeSendOnce.Do(func() {
-		err = cs.stream.Close()
+		err = writeEnvelope(cs.rwc, flagEnvelopeEndStream, nil)
 	})
 	return err
 }
@@ -155,7 +154,7 @@ func (cs *clientStream) Receive(msg any) error {
 		return io.EOF
 	}
 
-	flag, payload, err := readEnvelope(cs.stream)
+	flag, payload, err := readEnvelope(cs.rwc)
 	if err != nil {
 		if errors.Is(err, io.EOF) {
 			return connect.Errorf(connect.CodeInternal, "protocol error: unexpected EOF before end stream envelope")
@@ -170,11 +169,10 @@ func (cs *clientStream) Receive(msg any) error {
 
 	if flag == flagEnvelopeEndStream {
 		cs.rxEnd = true
-		var end framev1.EndStream
-		if err := proto.Unmarshal(payload, &end); err != nil {
+		cerr, trailers, err := unmarshalEndStream(payload)
+		if err != nil {
 			return connect.Errorf(connect.CodeInternal, "failed to unmarshal end stream envelope: %v", err)
 		}
-		cerr, trailers := protoToEndStream(&end)
 		if cs.callInfo != nil && cs.callInfo.ResponseTrailer() != nil {
 			for k, vs := range trailers {
 				cs.callInfo.ResponseTrailer().SetValues(k, vs)
@@ -225,7 +223,7 @@ func (cs *clientStream) Receive(msg any) error {
 }
 
 func (cs *clientStream) recvHeaders() error {
-	flag, payload, err := readEnvelope(cs.stream)
+	flag, payload, err := readEnvelope(cs.rwc)
 	if err != nil {
 		return err
 	}
@@ -250,7 +248,7 @@ func (cs *clientStream) recvHeaders() error {
 }
 
 func (cs *clientStream) readUnaryEndStream() error {
-	nextFlag, nextPayload, nextErr := readEnvelope(cs.stream)
+	nextFlag, nextPayload, nextErr := readEnvelope(cs.rwc)
 	if nextErr != nil {
 		return nextErr
 	}
@@ -258,11 +256,10 @@ func (cs *clientStream) readUnaryEndStream() error {
 		return connect.Errorf(connect.CodeInternal, "protocol error: expected end stream envelope after unary response message, got 0x%x", nextFlag)
 	}
 	cs.rxEnd = true
-	var end framev1.EndStream
-	if err := proto.Unmarshal(nextPayload, &end); err != nil {
+	cerr, trailers, err := unmarshalEndStream(nextPayload)
+	if err != nil {
 		return connect.Errorf(connect.CodeInternal, "failed to unmarshal end stream envelope: %v", err)
 	}
-	cerr, trailers := protoToEndStream(&end)
 	if cs.callInfo != nil && cs.callInfo.ResponseTrailer() != nil {
 		for k, vs := range trailers {
 			cs.callInfo.ResponseTrailer().SetValues(k, vs)
@@ -276,6 +273,5 @@ func (cs *clientStream) readUnaryEndStream() error {
 
 func (cs *clientStream) Close() error {
 	_ = cs.CloseSend()
-	cs.stream.CancelRead(0)
-	return nil
+	return cs.rwc.Close()
 }

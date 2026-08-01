@@ -15,15 +15,14 @@
 package connectwebsocket
 
 import (
-	"compress/gzip"
 	"context"
 	"errors"
-	"io"
 	"strings"
 
 	"connectrpc.com/connect/v2"
 	"connectrpc.com/connect/v2/connectproto"
-	"github.com/quic-go/webtransport-go"
+	"connectrpc.com/connect/v2/internal/connectprotocol"
+	"github.com/coder/websocket"
 )
 
 // Option configures NewTransport and NewHandler.
@@ -42,6 +41,7 @@ type transportOptions struct {
 	acceptCompression string
 	readMaxBytes      int
 	sendMaxBytes      int
+	dialOptions       *websocket.DialOptions
 }
 
 type serverOptions struct {
@@ -51,6 +51,7 @@ type serverOptions struct {
 	acceptCompression string
 	readMaxBytes      int
 	sendMaxBytes      int
+	acceptOptions     *websocket.AcceptOptions
 }
 
 type optionFunc func(*transportOptions, *serverOptions)
@@ -134,29 +135,14 @@ func WithSendMaxBytes(maxBytes int) Option {
 	})
 }
 
-// Default gzip compressor.
-type gzipCompressor struct{}
-
-func (gzipCompressor) Name() string { return connect.CompressionNameGzip }
-func (gzipCompressor) Compress(w io.Writer) (io.WriteCloser, error) {
-	return gzip.NewWriter(w), nil
-}
-func (gzipCompressor) Decompress(r io.Reader) (io.ReadCloser, error) {
-	return gzip.NewReader(r)
-}
-
-func defaultCompressors() (map[string]connect.Compressor, []string) {
-	c := gzipCompressor{}
-	return map[string]connect.Compressor{c.Name(): c}, []string{c.Name()}
-}
-
 type transport struct {
-	session *webtransport.Session
-	opts    transportOptions
+	url  string
+	opts transportOptions
 }
 
-// NewTransport returns a connect.Transport that dispatches RPCs over WebTransport.
-func NewTransport(session *webtransport.Session, opts ...Option) connect.Transport {
+// NewTransport returns a connect.Transport that dispatches RPCs over WebSocket.
+// It opens a dedicated WebSocket connection for each RPC.
+func NewTransport(url string, opts ...Option) connect.Transport {
 	tOpts := transportOptions{
 		codecs:         make(map[string]connect.Codec),
 		compressors:    make(map[string]connect.Compressor),
@@ -166,7 +152,7 @@ func NewTransport(session *webtransport.Session, opts ...Option) connect.Transpo
 	// Defaults
 	tOpts.codecs[connect.CodecNameProto] = connectproto.NewBinaryCodec()
 	tOpts.codecs[connect.CodecNameJSON] = connectproto.NewJSONCodec()
-	compMap, compNames := defaultCompressors()
+	compMap, compNames := connectprotocol.DefaultCompressors()
 	tOpts.compressors = compMap
 	tOpts.compressorNames = compNames
 
@@ -177,28 +163,47 @@ func NewTransport(session *webtransport.Session, opts ...Option) connect.Transpo
 	tOpts.acceptCompression = strings.Join(tOpts.compressorNames, ",")
 
 	return &transport{
-		session: session,
-		opts:    tOpts,
+		url:  url,
+		opts: tOpts,
 	}
 }
 
+// WithDialOptions sets custom websocket.DialOptions. The options are used for
+// every connection opened by the transport.
+func WithDialOptions(dialOpts *websocket.DialOptions) Option {
+	return optionFunc(func(topts *transportOptions, _ *serverOptions) {
+		if topts == nil {
+			return
+		}
+		if dialOpts == nil {
+			topts.dialOptions = nil
+			return
+		}
+		cloned := *dialOpts
+		topts.dialOptions = &cloned
+	})
+}
+
 func (t *transport) NewClientStream(ctx context.Context, spec connect.Spec) (connect.ClientStream, error) {
-	if t.session == nil {
-		return nil, errors.New("connectwebsocket: nil session")
+	if t.url == "" {
+		return nil, errors.New("connectwebsocket: empty URL")
 	}
-	stream, err := t.session.OpenStreamSync(ctx)
+	conn, _, err := websocket.Dial(ctx, t.url, t.opts.dialOptions)
 	if err != nil {
-		return nil, err
+		return nil, connect.Errorf(connect.CodeUnavailable, "failed to dial WebSocket: %v", err)
 	}
+	conn.SetReadLimit(-1)
 
 	callInfo, _ := connect.CallInfoForClientContext(ctx)
 	if callInfo != nil {
-		callInfo.Protocol = "webtransport"
+		callInfo.Protocol = "websocket"
 	}
+
+	rwc := websocket.NetConn(ctx, conn, websocket.MessageBinary)
 
 	clientStreamVal := &clientStream{
 		spec:     spec,
-		stream:   stream,
+		rwc:      rwc,
 		callInfo: callInfo,
 		opts:     t.opts,
 		codec:    t.opts.sendCodec,

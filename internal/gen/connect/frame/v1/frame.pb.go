@@ -131,279 +131,6 @@ func (x *Headers) GetFields() []*Header {
 	return nil
 }
 
-type ErrorDetail struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Type          string                 `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty"`
-	Value         []byte                 `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *ErrorDetail) Reset() {
-	*x = ErrorDetail{}
-	mi := &file_connect_frame_v1_frame_proto_msgTypes[2]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ErrorDetail) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ErrorDetail) ProtoMessage() {}
-
-func (x *ErrorDetail) ProtoReflect() protoreflect.Message {
-	mi := &file_connect_frame_v1_frame_proto_msgTypes[2]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ErrorDetail.ProtoReflect.Descriptor instead.
-func (*ErrorDetail) Descriptor() ([]byte, []int) {
-	return file_connect_frame_v1_frame_proto_rawDescGZIP(), []int{2}
-}
-
-func (x *ErrorDetail) GetType() string {
-	if x != nil {
-		return x.Type
-	}
-	return ""
-}
-
-func (x *ErrorDetail) GetValue() []byte {
-	if x != nil {
-		return x.Value
-	}
-	return nil
-}
-
-type Error struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Code          string                 `protobuf:"bytes,1,opt,name=code,proto3" json:"code,omitempty"`
-	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
-	Details       []*ErrorDetail         `protobuf:"bytes,3,rep,name=details,proto3" json:"details,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *Error) Reset() {
-	*x = Error{}
-	mi := &file_connect_frame_v1_frame_proto_msgTypes[3]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *Error) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*Error) ProtoMessage() {}
-
-func (x *Error) ProtoReflect() protoreflect.Message {
-	mi := &file_connect_frame_v1_frame_proto_msgTypes[3]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use Error.ProtoReflect.Descriptor instead.
-func (*Error) Descriptor() ([]byte, []int) {
-	return file_connect_frame_v1_frame_proto_rawDescGZIP(), []int{3}
-}
-
-func (x *Error) GetCode() string {
-	if x != nil {
-		return x.Code
-	}
-	return ""
-}
-
-func (x *Error) GetMessage() string {
-	if x != nil {
-		return x.Message
-	}
-	return ""
-}
-
-func (x *Error) GetDetails() []*ErrorDetail {
-	if x != nil {
-		return x.Details
-	}
-	return nil
-}
-
-type EndStream struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Error         *Error                 `protobuf:"bytes,1,opt,name=error,proto3" json:"error,omitempty"`
-	Metadata      *Headers               `protobuf:"bytes,2,opt,name=metadata,proto3" json:"metadata,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *EndStream) Reset() {
-	*x = EndStream{}
-	mi := &file_connect_frame_v1_frame_proto_msgTypes[4]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *EndStream) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*EndStream) ProtoMessage() {}
-
-func (x *EndStream) ProtoReflect() protoreflect.Message {
-	mi := &file_connect_frame_v1_frame_proto_msgTypes[4]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use EndStream.ProtoReflect.Descriptor instead.
-func (*EndStream) Descriptor() ([]byte, []int) {
-	return file_connect_frame_v1_frame_proto_rawDescGZIP(), []int{4}
-}
-
-func (x *EndStream) GetError() *Error {
-	if x != nil {
-		return x.Error
-	}
-	return nil
-}
-
-func (x *EndStream) GetMetadata() *Headers {
-	if x != nil {
-		return x.Metadata
-	}
-	return nil
-}
-
-type WebSocketFrame struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// stream_id is only used for WebSocket multiplexing
-	StreamId uint32 `protobuf:"varint,1,opt,name=stream_id,json=streamId,proto3" json:"stream_id,omitempty"`
-	// The type of the frame
-	//
-	// Types that are valid to be assigned to Payload:
-	//
-	//	*WebSocketFrame_Headers
-	//	*WebSocketFrame_Data
-	//	*WebSocketFrame_EndStream
-	Payload       isWebSocketFrame_Payload `protobuf_oneof:"payload"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *WebSocketFrame) Reset() {
-	*x = WebSocketFrame{}
-	mi := &file_connect_frame_v1_frame_proto_msgTypes[5]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *WebSocketFrame) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*WebSocketFrame) ProtoMessage() {}
-
-func (x *WebSocketFrame) ProtoReflect() protoreflect.Message {
-	mi := &file_connect_frame_v1_frame_proto_msgTypes[5]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use WebSocketFrame.ProtoReflect.Descriptor instead.
-func (*WebSocketFrame) Descriptor() ([]byte, []int) {
-	return file_connect_frame_v1_frame_proto_rawDescGZIP(), []int{5}
-}
-
-func (x *WebSocketFrame) GetStreamId() uint32 {
-	if x != nil {
-		return x.StreamId
-	}
-	return 0
-}
-
-func (x *WebSocketFrame) GetPayload() isWebSocketFrame_Payload {
-	if x != nil {
-		return x.Payload
-	}
-	return nil
-}
-
-func (x *WebSocketFrame) GetHeaders() *Headers {
-	if x != nil {
-		if x, ok := x.Payload.(*WebSocketFrame_Headers); ok {
-			return x.Headers
-		}
-	}
-	return nil
-}
-
-func (x *WebSocketFrame) GetData() []byte {
-	if x != nil {
-		if x, ok := x.Payload.(*WebSocketFrame_Data); ok {
-			return x.Data
-		}
-	}
-	return nil
-}
-
-func (x *WebSocketFrame) GetEndStream() *EndStream {
-	if x != nil {
-		if x, ok := x.Payload.(*WebSocketFrame_EndStream); ok {
-			return x.EndStream
-		}
-	}
-	return nil
-}
-
-type isWebSocketFrame_Payload interface {
-	isWebSocketFrame_Payload()
-}
-
-type WebSocketFrame_Headers struct {
-	Headers *Headers `protobuf:"bytes,2,opt,name=headers,proto3,oneof"`
-}
-
-type WebSocketFrame_Data struct {
-	Data []byte `protobuf:"bytes,3,opt,name=data,proto3,oneof"`
-}
-
-type WebSocketFrame_EndStream struct {
-	EndStream *EndStream `protobuf:"bytes,4,opt,name=end_stream,json=endStream,proto3,oneof"`
-}
-
-func (*WebSocketFrame_Headers) isWebSocketFrame_Payload() {}
-
-func (*WebSocketFrame_Data) isWebSocketFrame_Payload() {}
-
-func (*WebSocketFrame_EndStream) isWebSocketFrame_Payload() {}
-
 var File_connect_frame_v1_frame_proto protoreflect.FileDescriptor
 
 const file_connect_frame_v1_frame_proto_rawDesc = "" +
@@ -413,24 +140,7 @@ const file_connect_frame_v1_frame_proto_rawDesc = "" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x16\n" +
 	"\x06values\x18\x02 \x03(\tR\x06values\">\n" +
 	"\aHeaders\x123\n" +
-	"\x06fields\x18\x01 \x03(\v2\x1b.connectrpc.frame.v1.HeaderR\x06fields\"7\n" +
-	"\vErrorDetail\x12\x12\n" +
-	"\x04type\x18\x01 \x01(\tR\x04type\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\fR\x05value\"q\n" +
-	"\x05Error\x12\x12\n" +
-	"\x04code\x18\x01 \x01(\tR\x04code\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\x12:\n" +
-	"\adetails\x18\x03 \x03(\v2 .connectrpc.frame.v1.ErrorDetailR\adetails\"w\n" +
-	"\tEndStream\x120\n" +
-	"\x05error\x18\x01 \x01(\v2\x1a.connectrpc.frame.v1.ErrorR\x05error\x128\n" +
-	"\bmetadata\x18\x02 \x01(\v2\x1c.connectrpc.frame.v1.HeadersR\bmetadata\"\xc9\x01\n" +
-	"\x0eWebSocketFrame\x12\x1b\n" +
-	"\tstream_id\x18\x01 \x01(\rR\bstreamId\x128\n" +
-	"\aheaders\x18\x02 \x01(\v2\x1c.connectrpc.frame.v1.HeadersH\x00R\aheaders\x12\x14\n" +
-	"\x04data\x18\x03 \x01(\fH\x00R\x04data\x12?\n" +
-	"\n" +
-	"end_stream\x18\x04 \x01(\v2\x1e.connectrpc.frame.v1.EndStreamH\x00R\tendStreamB\t\n" +
-	"\apayloadB\xd4\x01\n" +
+	"\x06fields\x18\x01 \x03(\v2\x1b.connectrpc.frame.v1.HeaderR\x06fieldsB\xd4\x01\n" +
 	"\x17com.connectrpc.frame.v1B\n" +
 	"FrameProtoP\x01Z?connectrpc.com/connect/v2/internal/gen/connect/frame/v1;framev1\xa2\x02\x03CFX\xaa\x02\x13Connectrpc.Frame.V1\xca\x02\x13Connectrpc\\Frame\\V1\xe2\x02\x1fConnectrpc\\Frame\\V1\\GPBMetadata\xea\x02\x15Connectrpc::Frame::V1b\x06proto3"
 
@@ -446,27 +156,18 @@ func file_connect_frame_v1_frame_proto_rawDescGZIP() []byte {
 	return file_connect_frame_v1_frame_proto_rawDescData
 }
 
-var file_connect_frame_v1_frame_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_connect_frame_v1_frame_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
 var file_connect_frame_v1_frame_proto_goTypes = []any{
-	(*Header)(nil),         // 0: connectrpc.frame.v1.Header
-	(*Headers)(nil),        // 1: connectrpc.frame.v1.Headers
-	(*ErrorDetail)(nil),    // 2: connectrpc.frame.v1.ErrorDetail
-	(*Error)(nil),          // 3: connectrpc.frame.v1.Error
-	(*EndStream)(nil),      // 4: connectrpc.frame.v1.EndStream
-	(*WebSocketFrame)(nil), // 5: connectrpc.frame.v1.WebSocketFrame
+	(*Header)(nil),  // 0: connectrpc.frame.v1.Header
+	(*Headers)(nil), // 1: connectrpc.frame.v1.Headers
 }
 var file_connect_frame_v1_frame_proto_depIdxs = []int32{
 	0, // 0: connectrpc.frame.v1.Headers.fields:type_name -> connectrpc.frame.v1.Header
-	2, // 1: connectrpc.frame.v1.Error.details:type_name -> connectrpc.frame.v1.ErrorDetail
-	3, // 2: connectrpc.frame.v1.EndStream.error:type_name -> connectrpc.frame.v1.Error
-	1, // 3: connectrpc.frame.v1.EndStream.metadata:type_name -> connectrpc.frame.v1.Headers
-	1, // 4: connectrpc.frame.v1.WebSocketFrame.headers:type_name -> connectrpc.frame.v1.Headers
-	4, // 5: connectrpc.frame.v1.WebSocketFrame.end_stream:type_name -> connectrpc.frame.v1.EndStream
-	6, // [6:6] is the sub-list for method output_type
-	6, // [6:6] is the sub-list for method input_type
-	6, // [6:6] is the sub-list for extension type_name
-	6, // [6:6] is the sub-list for extension extendee
-	0, // [0:6] is the sub-list for field type_name
+	1, // [1:1] is the sub-list for method output_type
+	1, // [1:1] is the sub-list for method input_type
+	1, // [1:1] is the sub-list for extension type_name
+	1, // [1:1] is the sub-list for extension extendee
+	0, // [0:1] is the sub-list for field type_name
 }
 
 func init() { file_connect_frame_v1_frame_proto_init() }
@@ -474,18 +175,13 @@ func file_connect_frame_v1_frame_proto_init() {
 	if File_connect_frame_v1_frame_proto != nil {
 		return
 	}
-	file_connect_frame_v1_frame_proto_msgTypes[5].OneofWrappers = []any{
-		(*WebSocketFrame_Headers)(nil),
-		(*WebSocketFrame_Data)(nil),
-		(*WebSocketFrame_EndStream)(nil),
-	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_connect_frame_v1_frame_proto_rawDesc), len(file_connect_frame_v1_frame_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   6,
+			NumMessages:   2,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

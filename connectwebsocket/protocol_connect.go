@@ -21,16 +21,15 @@ import (
 	"strings"
 
 	"connectrpc.com/connect/v2"
-	"connectrpc.com/connect/v2/connectproto"
+	"connectrpc.com/connect/v2/internal/connectprotocol"
 	framev1 "connectrpc.com/connect/v2/internal/gen/connect/frame/v1"
-	"google.golang.org/protobuf/types/known/anypb"
 )
 
 // Envelope flag constants.
 const (
 	flagEnvelopeData       uint8 = 0x00
-	flagEnvelopeCompressed uint8 = 0x01
-	flagEnvelopeEndStream  uint8 = 0x02
+	flagEnvelopeCompressed uint8 = connectprotocol.FlagEnvelopeCompressed
+	flagEnvelopeEndStream  uint8 = connectprotocol.FlagEnvelopeEndStream
 	flagEnvelopeHeaders    uint8 = 0x04
 )
 
@@ -74,56 +73,10 @@ func protoToHeaders(protoHeaders *framev1.Headers) http.Header {
 	return headers
 }
 
-func endStreamToProto(err *connect.Error, trailers http.Header) *framev1.EndStream {
-	out := &framev1.EndStream{}
-	if err != nil {
-		var details []*framev1.ErrorDetail
-		for _, detail := range err.Details() {
-			anyDetail := connectproto.ErrorDetailToAny(detail)
-			details = append(details, &framev1.ErrorDetail{
-				Type:  anyDetail.TypeUrl,
-				Value: anyDetail.Value,
-			})
-		}
-		out.Error = &framev1.Error{
-			Code:    err.Code().String(),
-			Message: err.Message(),
-			Details: details,
-		}
-	}
-	if len(trailers) > 0 {
-		out.Metadata = headersToProto(trailers)
-	}
-	return out
+func marshalEndStream(err *connect.Error, trailers http.Header) ([]byte, error) {
+	return connectprotocol.MarshalEndStream(err, trailers)
 }
 
-func protoToEndStream(protoEndStream *framev1.EndStream) (*connect.Error, http.Header) {
-	var err *connect.Error
-	if protoEndStream.Error != nil {
-		var code connect.Code
-		_ = code.UnmarshalText([]byte(protoEndStream.Error.Code))
-		if code == 0 {
-			code = connect.CodeUnknown
-		}
-		cerr := connect.NewError(code, protoEndStream.Error.Message)
-		for _, detail := range protoEndStream.Error.Details {
-			typeURL := detail.Type
-			if !strings.Contains(typeURL, "/") {
-				typeURL = "type.googleapis.com/" + typeURL
-			}
-			anyDetail := &anypb.Any{
-				TypeUrl: typeURL,
-				Value:   detail.Value,
-			}
-			if errDetail, err := connectproto.NewErrorDetail(anyDetail); err == nil {
-				cerr = cerr.WithDetail(errDetail)
-			}
-		}
-		err = cerr.WithRemote()
-	}
-	var trailers http.Header
-	if protoEndStream.Metadata != nil {
-		trailers = protoToHeaders(protoEndStream.Metadata)
-	}
-	return err, trailers
+func unmarshalEndStream(data []byte) (*connect.Error, http.Header, error) {
+	return connectprotocol.UnmarshalEndStream(data)
 }

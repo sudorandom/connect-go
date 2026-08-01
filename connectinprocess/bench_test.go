@@ -43,27 +43,37 @@ func BenchmarkInProcessUnary(b *testing.B) {
 }
 
 func BenchmarkInProcessServerStreaming(b *testing.B) {
-	const messages = 8
 	handler := connect.NewServer()
 	pingv1connect.RegisterPingServiceHandler(handler, pingServer{})
 	transport := connectinprocess.New(handler)
 	client := pingv1connect.NewPingServiceClient(connect.NewClient(transport))
 	ctx := b.Context()
 
-	b.ReportAllocs()
-	b.ResetTimer()
-	for b.Loop() {
-		stream, err := client.CountUp(ctx, &pingv1.CountUpRequest{Number: messages})
-		if err != nil {
-			b.Fatal(err)
-		}
-		for {
-			if _, err := stream.Receive(); err != nil {
-				if errors.Is(err, io.EOF) {
-					break
+	for _, benchmark := range []struct {
+		name     string
+		messages int64
+	}{
+		{name: "messages_1", messages: 1},
+		{name: "messages_1000", messages: 1000},
+	} {
+		b.Run(benchmark.name, func(b *testing.B) {
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				stream, err := client.CountUp(ctx, &pingv1.CountUpRequest{Number: benchmark.messages})
+				if err != nil {
+					b.Fatal(err)
 				}
-				b.Fatal(err)
+				for {
+					if _, err := stream.Receive(); err != nil {
+						if errors.Is(err, io.EOF) {
+							break
+						}
+						b.Fatal(err)
+					}
+				}
 			}
-		}
+			b.ReportMetric(float64(b.Elapsed().Nanoseconds())/(float64(b.N)*float64(benchmark.messages)), "ns/message")
+		})
 	}
 }

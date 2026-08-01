@@ -32,11 +32,13 @@ import (
 	"time"
 
 	"connectrpc.com/connect/v2"
+	"connectrpc.com/connect/v2/connectproto"
 	"connectrpc.com/connect/v2/connectwebtransport"
 	pingv1 "connectrpc.com/connect/v2/internal/gen/connect/ping/v1"
 	pingv1connect "connectrpc.com/connect/v2/internal/gen/connect/ping/v1/pingv1connect"
 	"github.com/quic-go/quic-go/http3"
 	"github.com/quic-go/webtransport-go"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 func generateSelfSignedCert() (tls.Certificate, error) {
@@ -78,7 +80,7 @@ type testPingServer struct {
 }
 
 func (s testPingServer) Ping(ctx context.Context, req *pingv1.PingRequest) (*pingv1.PingResponse, error) {
-	if info := connect.ServerInfoForContext(ctx); info != nil {
+	if info, ok := connect.CallInfoForServerContext(ctx); ok {
 		for k, v := range s.respHeaders {
 			info.ResponseHeader().Set(k, v)
 		}
@@ -90,13 +92,17 @@ func (s testPingServer) Ping(ctx context.Context, req *pingv1.PingRequest) (*pin
 }
 
 func (testPingServer) Fail(_ context.Context, _ *pingv1.FailRequest) (*pingv1.FailResponse, error) {
-	return nil, connect.Errorf(connect.CodeUnimplemented, "Fail")
+	detail, err := connectproto.NewErrorDetail(wrapperspb.String("detail"))
+	if err != nil {
+		return nil, err
+	}
+	return nil, connect.NewError(connect.CodeUnimplemented, "Fail").WithDetail(detail)
 }
 
 func (testPingServer) Sum(ctx context.Context, stream pingv1connect.PingServiceSumServerStream) (*pingv1.SumResponse, error) {
 	var total int64
 	for {
-		req, err := stream.Receive(ctx)
+		req, err := stream.Receive()
 		if errors.Is(err, io.EOF) {
 			break
 		}
@@ -108,19 +114,19 @@ func (testPingServer) Sum(ctx context.Context, stream pingv1connect.PingServiceS
 	return &pingv1.SumResponse{Sum: total}, nil
 }
 
-func (testPingServer) CountUp(ctx context.Context, req *pingv1.CountUpRequest, stream pingv1connect.PingServiceCountUpServerStream) error {
+func (testPingServer) CountUp(_ context.Context, req *pingv1.CountUpRequest, stream pingv1connect.PingServiceCountUpServerStream) error {
 	for i := int64(1); i <= req.GetNumber(); i++ {
-		if err := stream.Send(ctx, &pingv1.CountUpResponse{Number: i}); err != nil {
+		if err := stream.Send(&pingv1.CountUpResponse{Number: i}); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (testPingServer) CumSum(ctx context.Context, stream pingv1connect.PingServiceCumSumServerStream) error {
+func (testPingServer) CumSum(_ context.Context, stream pingv1connect.PingServiceCumSumServerStream) error {
 	var sum int64
 	for {
-		req, err := stream.Receive(ctx)
+		req, err := stream.Receive()
 		if errors.Is(err, io.EOF) {
 			return nil
 		}
@@ -128,7 +134,7 @@ func (testPingServer) CumSum(ctx context.Context, stream pingv1connect.PingServi
 			return err
 		}
 		sum += req.GetNumber()
-		if err := stream.Send(ctx, &pingv1.CumSumResponse{Sum: sum}); err != nil {
+		if err := stream.Send(&pingv1.CumSumResponse{Sum: sum}); err != nil {
 			return err
 		}
 	}
@@ -141,32 +147,27 @@ func TestWebTransportRoundTrip(t *testing.T) {
 		t.Fatalf("failed to generate cert: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	t.Cleanup(cancel)
-
-	h3TLSConfig := &tls.Config{
+	tlsConfig := &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		NextProtos:   []string{http3.NextProtoH3},
 	}
 
-	mux := http.NewServeMux()
+	wtServer := &webtransport.Server{
+		H3: &http3.Server{
+			TLSConfig: tlsConfig,
+		},
+	}
+	t.Cleanup(func() { wtServer.Close() })
+
 	connectServer := connect.NewServer()
 	pingv1connect.RegisterPingServiceHandler(connectServer, testPingServer{
 		respHeaders:  map[string]string{"X-Test-Header": "header-val"},
 		respTrailers: map[string]string{"X-Test-Trailer": "trailer-val"},
 	})
+
 	webtransportHandler := connectwebtransport.NewHandler(connectServer)
 
-	wtServer := &webtransport.Server{
-		H3: &http3.Server{
-			Handler:         mux,
-			TLSConfig:       h3TLSConfig,
-			EnableDatagrams: true,
-		},
-		CheckOrigin: func(r *http.Request) bool { return true },
-	}
-	webtransport.ConfigureHTTP3Server(wtServer.H3)
-
+	mux := http.NewServeMux()
 	mux.HandleFunc("/webtransport", func(w http.ResponseWriter, r *http.Request) {
 		session, err := wtServer.Upgrade(w, r)
 		if err != nil {
@@ -174,9 +175,10 @@ func TestWebTransportRoundTrip(t *testing.T) {
 		}
 		webtransportHandler.HandleSession(r.Context(), session)
 	})
+	wtServer.H3.Handler = mux
 
 	var listenConfig net.ListenConfig
-	packetConn, err := listenConfig.ListenPacket(ctx, "udp", "127.0.0.1:0")
+	packetConn, err := listenConfig.ListenPacket(t.Context(), "udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("failed to listen packet: %v", err)
 	}
@@ -187,19 +189,19 @@ func TestWebTransportRoundTrip(t *testing.T) {
 	go func() {
 		_ = wtServer.Serve(packetConn)
 	}()
-	t.Cleanup(func() { wtServer.Close() })
 
 	// Wait for server to start serving
 	time.Sleep(100 * time.Millisecond)
 
-	dialer := &webtransport.Dialer{
+	wtClient := &webtransport.Transport{
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: true,
 			NextProtos:         []string{http3.NextProtoH3},
 		},
 	}
+	defer wtClient.Close()
 
-	dialResp, session, err := dialer.Dial(ctx, "https://"+addr+"/webtransport", nil)
+	dialResp, session, err := wtClient.Dial(t.Context(), "https://"+addr+"/webtransport", nil)
 	if err != nil {
 		t.Fatalf("failed to dial: %v", err)
 	}
@@ -218,7 +220,7 @@ func TestWebTransportRoundTrip(t *testing.T) {
 	// 1. Unary call
 	t.Run("Unary", func(t *testing.T) {
 		t.Parallel()
-		ctx, callInfo := connect.NewClientContext(ctx)
+		ctx, callInfo := connect.NewClientContext(t.Context())
 		resp, err := client.Ping(ctx, &pingv1.PingRequest{Number: 42, Text: "hello"})
 		if err != nil {
 			t.Fatalf("Ping failed: %v", err)
@@ -227,10 +229,10 @@ func TestWebTransportRoundTrip(t *testing.T) {
 			t.Errorf("unexpected response: %+v", resp)
 		}
 
-		if got, _ := callInfo.ResponseHeader().Get("X-Test-Header"); got != "header-val" {
+		if got := callInfo.ResponseHeader().Get("X-Test-Header"); got != "header-val" {
 			t.Errorf("expected X-Test-Header 'header-val', got %q", got)
 		}
-		if got, _ := callInfo.ResponseTrailer().Get("X-Test-Trailer"); got != "trailer-val" {
+		if got := callInfo.ResponseTrailer().Get("X-Test-Trailer"); got != "trailer-val" {
 			t.Errorf("expected X-Test-Trailer 'trailer-val', got %q", got)
 		}
 	})
@@ -238,7 +240,7 @@ func TestWebTransportRoundTrip(t *testing.T) {
 	// 2. Server streaming call
 	t.Run("ServerStreaming", func(t *testing.T) {
 		t.Parallel()
-		stream, err := client.CountUp(ctx, &pingv1.CountUpRequest{Number: 3})
+		stream, err := client.CountUp(t.Context(), &pingv1.CountUpRequest{Number: 3})
 		if err != nil {
 			t.Fatalf("CountUp failed: %v", err)
 		}
@@ -246,7 +248,7 @@ func TestWebTransportRoundTrip(t *testing.T) {
 
 		var numbers []int64
 		for {
-			res, err := stream.Receive(ctx)
+			res, err := stream.Receive()
 			if errors.Is(err, io.EOF) {
 				break
 			}
@@ -263,17 +265,17 @@ func TestWebTransportRoundTrip(t *testing.T) {
 	// 3. Bidirectional streaming call
 	t.Run("BidiStreaming", func(t *testing.T) {
 		t.Parallel()
-		bidiStream, err := client.CumSum(ctx)
+		bidiStream, err := client.CumSum(t.Context())
 		if err != nil {
 			t.Fatalf("CumSum failed: %v", err)
 		}
 		defer bidiStream.Close()
 
-		err = bidiStream.Send(ctx, &pingv1.CumSumRequest{Number: 10})
+		err = bidiStream.Send(&pingv1.CumSumRequest{Number: 10})
 		if err != nil {
 			t.Fatalf("Send failed: %v", err)
 		}
-		res, err := bidiStream.Receive(ctx)
+		res, err := bidiStream.Receive()
 		if err != nil {
 			t.Fatalf("Receive failed: %v", err)
 		}
@@ -281,16 +283,39 @@ func TestWebTransportRoundTrip(t *testing.T) {
 			t.Errorf("unexpected sum: %d", res.GetSum())
 		}
 
-		err = bidiStream.Send(ctx, &pingv1.CumSumRequest{Number: 20})
+		err = bidiStream.Send(&pingv1.CumSumRequest{Number: 20})
 		if err != nil {
 			t.Fatalf("Send failed: %v", err)
 		}
-		res, err = bidiStream.Receive(ctx)
+		res, err = bidiStream.Receive()
 		if err != nil {
 			t.Fatalf("Receive failed: %v", err)
 		}
 		if res.GetSum() != 30 {
 			t.Errorf("unexpected sum: %d", res.GetSum())
+		}
+	})
+
+	t.Run("ErrorDetails", func(t *testing.T) {
+		t.Parallel()
+		_, err := client.Fail(t.Context(), &pingv1.FailRequest{})
+		var connectErr *connect.Error
+		if !errors.As(err, &connectErr) {
+			t.Fatalf("Fail error = %v, want *connect.Error", err)
+		}
+		if got, want := connectErr.Code(), connect.CodeUnimplemented; got != want {
+			t.Errorf("error code = %v, want %v", got, want)
+		}
+		details := connectErr.Details()
+		if len(details) != 1 {
+			t.Fatalf("error detail count = %d, want 1", len(details))
+		}
+		message, err := connectproto.UnmarshalErrorDetail(details[0])
+		if err != nil {
+			t.Fatalf("unmarshal error detail: %v", err)
+		}
+		if got, want := message.(*wrapperspb.StringValue).GetValue(), "detail"; got != want {
+			t.Errorf("error detail = %q, want %q", got, want)
 		}
 	})
 }
