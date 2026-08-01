@@ -90,6 +90,7 @@ func (x *Header) GetValues() []string {
 type Headers struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Fields        []*Header              `protobuf:"bytes,1,rep,name=fields,proto3" json:"fields,omitempty"`
+	EndStream     bool                   `protobuf:"varint,2,opt,name=end_stream,json=endStream,proto3" json:"end_stream,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -129,6 +130,13 @@ func (x *Headers) GetFields() []*Header {
 		return x.Fields
 	}
 	return nil
+}
+
+func (x *Headers) GetEndStream() bool {
+	if x != nil {
+		return x.EndStream
+	}
+	return false
 }
 
 var File_connect_frame_v1_frame_proto protoreflect.FileDescriptor

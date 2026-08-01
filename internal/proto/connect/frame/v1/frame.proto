@@ -25,4 +25,5 @@ message Header {
 
 message Headers {
   repeated Header fields = 1;
+  bool end_stream = 2;
 }

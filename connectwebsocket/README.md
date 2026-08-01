@@ -90,28 +90,25 @@ The defined flag values are:
 | `0x00` | data | One uncompressed RPC message encoded with the selected codec |
 | `0x01` | compressed data | One compressed, codec-encoded RPC message |
 | `0x02` | end stream | Empty on requests; Connect EndStreamResponse JSON on responses |
-| `0x04` | headers | Protobuf `Headers` |
+| `0x04` | headers | JSON metadata object (`{"metadata": ...}`) |
 
 These are complete flag-byte values in this protocol. Other values and a
 second headers envelope in the same direction are protocol errors.
 
 ### Control payloads
 
-The headers envelope uses this binary protobuf schema, even when RPC messages
-use the JSON codec:
+The headers envelope (`0x04`) uses this JSON object schema:
 
-```proto
-message Header {
-  string key = 1;
-  repeated string values = 2;
-}
-
-message Headers {
-  repeated Header fields = 1;
+```json
+{
+  "metadata": {
+    ":path": ["/connectrpc.eliza.v1.ElizaService/Converse"],
+    "content-type": ["application/connect+proto"]
+  }
 }
 ```
 
-The response end-stream envelope reuses the Connect protocol's standard JSON
+The response end-stream envelope (`0x02`) reuses the Connect protocol's standard JSON
 EndStreamResponse:
 
 ```json

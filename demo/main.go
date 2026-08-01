@@ -106,6 +106,21 @@ func main() {
 	connecthttp.Mount(mux, connectServer)
 
 	mux.Handle("/websocket", websocketHandler)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
+			http.ServeFile(w, r, "index.html")
+			return
+		}
+		if r.URL.Path == "/style.css" {
+			http.ServeFile(w, r, "style.css")
+			return
+		}
+		if r.URL.Path == "/webclient.js" {
+			http.ServeFile(w, r, "webclient.js")
+			return
+		}
+		http.NotFound(w, r)
+	})
 
 	// Handle standard Connect HTTP traffic (unary/gRPC/etc) with CORS
 	corsHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

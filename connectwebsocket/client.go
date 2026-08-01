@@ -27,8 +27,6 @@ import (
 	"time"
 
 	"connectrpc.com/connect/v2"
-	framev1 "connectrpc.com/connect/v2/internal/gen/connect/frame/v1"
-	"google.golang.org/protobuf/proto"
 )
 
 type clientStream struct {
@@ -78,9 +76,7 @@ func (cs *clientStream) sendHeaders() error {
 		}
 	}
 
-	protoHeaders, cleanup := headersToProto(header)
-	defer cleanup()
-	data, err := proto.Marshal(protoHeaders)
+	data, err := marshalHeaders(header)
 	if err != nil {
 		return connect.Errorf(connect.CodeInternal, "failed to marshal headers: %v", err)
 	}
@@ -231,11 +227,10 @@ func (cs *clientStream) recvHeaders() error {
 	if flag != flagEnvelopeHeaders {
 		return connect.Errorf(connect.CodeInternal, "protocol error: expected headers frame first, got 0x%x", flag)
 	}
-	var protoHeaders framev1.Headers
-	if err := proto.Unmarshal(payload, &protoHeaders); err != nil {
+	headers, err := unmarshalHeaders(payload)
+	if err != nil {
 		return connect.Errorf(connect.CodeInternal, "failed to unmarshal response headers: %v", err)
 	}
-	headers := protoToHeaders(&protoHeaders)
 	if cs.callInfo != nil && cs.callInfo.ResponseHeader() != nil {
 		for k, vs := range headers {
 			// Skip pseudokeys

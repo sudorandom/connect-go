@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log"
 	"maps"
 	"net/http"
 	"strconv"
@@ -29,9 +30,7 @@ import (
 	"connectrpc.com/connect/v2"
 	"connectrpc.com/connect/v2/connectproto"
 	"connectrpc.com/connect/v2/internal/connectprotocol"
-	framev1 "connectrpc.com/connect/v2/internal/gen/connect/frame/v1"
 	"github.com/quic-go/webtransport-go"
-	"google.golang.org/protobuf/proto"
 )
 
 type Handler struct {
@@ -86,23 +85,26 @@ func (h *Handler) handleStream(sessionCtx context.Context, session *webtransport
 	// Read request headers
 	flag, payload, err := readEnvelope(stream)
 	if err != nil {
+		log.Printf("[WT Server] Error reading envelope: %v", err)
 		return
 	}
 	if flag != flagEnvelopeHeaders {
+		log.Printf("[WT Server] Unexpected initial flag: 0x%x", flag)
 		return
 	}
 
-	var protoHeaders framev1.Headers
-	if err := proto.Unmarshal(payload, &protoHeaders); err != nil {
+	headers, err := unmarshalHeaders(payload)
+	if err != nil {
+		log.Printf("[WT Server] Error unmarshaling headers (payload len=%d, flag=0x%x, data=%q): %v", len(payload), flag, payload, err)
 		return
 	}
-	headers := protoToHeaders(&protoHeaders)
 
 	procedure := ""
 	if vs := headers[":path"]; len(vs) > 0 {
 		procedure = vs[0]
 	}
 	if procedure == "" {
+		log.Printf("[WT Server] Missing :path header in headers: %v", headers)
 		return
 	}
 
@@ -262,9 +264,7 @@ func (ss *serverStream) sendHeaders() error {
 		header.Set("Connect-Accept-Encoding", ss.opts.acceptCompression)
 	}
 
-	protoHeaders, cleanup := headersToProto(header)
-	defer cleanup()
-	data, err := proto.Marshal(protoHeaders)
+	data, err := marshalHeaders(header)
 	if err != nil {
 		return connect.Errorf(connect.CodeInternal, "failed to marshal response headers: %v", err)
 	}

@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"connectrpc.com/connect/v2"
 	"connectrpc.com/connect/v2/connectproto"
@@ -167,4 +168,34 @@ func UnmarshalEndStream(data []byte) (*connect.Error, http.Header, error) {
 		return nil, nil, err
 	}
 	return end.Error.AsError(), end.Trailer, nil
+}
+
+// HeaderMessage is the Connect protocol's JSON header payload for control frames.
+type HeaderMessage struct {
+	Metadata http.Header `json:"metadata,omitempty"`
+}
+
+// MarshalHeaders serializes an HTTP header map into JSON.
+func MarshalHeaders(header http.Header) ([]byte, error) {
+	msg := HeaderMessage{Metadata: header}
+	return json.Marshal(&msg)
+}
+
+// UnmarshalHeaders parses a JSON header control frame payload.
+func UnmarshalHeaders(data []byte) (http.Header, error) {
+	var msg HeaderMessage
+	if err := json.Unmarshal(data, &msg); err != nil {
+		return nil, err
+	}
+	res := make(http.Header)
+	if msg.Metadata != nil {
+		for k, vs := range msg.Metadata {
+			if strings.HasPrefix(k, ":") {
+				res[k] = vs
+			} else {
+				res[http.CanonicalHeaderKey(k)] = vs
+			}
+		}
+	}
+	return res, nil
 }
