@@ -78,6 +78,7 @@ type protocolHandlerParams struct {
 	ReadMaxBytes                 int
 	SendMaxBytes                 int
 	RequireConnectProtocolHeader bool
+	DisableQuery                 bool
 	IdempotencyLevel             connect.IdempotencyLevel
 }
 
@@ -125,6 +126,7 @@ type protocolClientParams struct {
 	EnableGet        bool
 	GetURLMaxBytes   int
 	GetUseFallback   bool
+	EnableQuery      bool
 	// The gRPC family of protocols always needs access to a Protobuf codec to
 	// marshal and unmarshal errors.
 	Protobuf connect.Codec
@@ -259,6 +261,48 @@ func mappedMethodHandlers(handlers []protocolHandler) map[string][]protocolHandl
 		}
 	}
 	return methodHandlers
+}
+
+// sortedAcceptQueryValue returns the Accept-Query header value: a Structured
+// Field List of the content types that handlers accept for QUERY requests.
+func sortedAcceptQueryValue(handlers []protocolHandler) string {
+	contentTypes := make(map[string]struct{})
+	for _, handler := range handlers {
+		if _, ok := handler.Methods()[methodQuery]; !ok {
+			continue
+		}
+		for contentType := range handler.ContentTypes() {
+			if strings.Contains(contentType, ";") {
+				// Media type parameters, like the JSON charset variant, aren't
+				// advertised.
+				continue
+			}
+			contentTypes[contentType] = struct{}{}
+		}
+	}
+	accept := make([]string, 0, len(contentTypes))
+	for contentType := range contentTypes {
+		accept = append(accept, structuredFieldItem(contentType))
+	}
+	sort.Strings(accept)
+	return strings.Join(accept, ", ")
+}
+
+var structuredFieldStringEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`) //nolint:gochecknoglobals
+
+// structuredFieldItem renders value as an RFC 9651 Token if it is a valid one
+// and as a String otherwise.
+func structuredFieldItem(value string) string {
+	isToken := value != "" && (value[0] == '*' || value[0] >= 'a' && value[0] <= 'z' || value[0] >= 'A' && value[0] <= 'Z')
+	for i := 0; isToken && i < len(value); i++ {
+		char := value[i]
+		isToken = char == ':' || char == '/' || strings.IndexByte("!#$%&'*+-.^_`|~", char) >= 0 ||
+			char >= '0' && char <= '9' || char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z'
+	}
+	if isToken {
+		return value
+	}
+	return `"` + structuredFieldStringEscaper.Replace(value) + `"`
 }
 
 func sortedAcceptPostValue(handlers []protocolHandler) string {

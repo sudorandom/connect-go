@@ -64,7 +64,8 @@ func ClientInfoForContext(ctx context.Context) (*ClientInfo, bool) {
 }
 
 // HTTPMethod is the HTTP method of the dispatched request, "POST" by
-// default, "GET" when [WithHTTPGet] upgrades a side-effect-free unary call.
+// default, "GET" when [WithHTTPGet] upgrades a side-effect-free unary call,
+// and "QUERY" when [WithHTTPQuery] does.
 func (c *ClientInfo) HTTPMethod() string {
 	request := c.loadRequest()
 	if request == nil {
@@ -146,7 +147,8 @@ func ServerInfoForContext(ctx context.Context) (*ServerInfo, bool) {
 	return info, ok
 }
 
-// HTTPMethod is the HTTP method of the incoming request.
+// HTTPMethod is the HTTP method of the incoming request: "POST", "GET", or
+// "QUERY".
 func (s *ServerInfo) HTTPMethod() string {
 	if s == nil || s.request == nil {
 		return ""
@@ -453,9 +455,11 @@ type options struct {
 	getEnabled     bool
 	getMaxURLBytes int
 	getUseFallback bool
+	queryEnabled   bool
 
 	// Server-only ([NewTransport] ignores these).
 	requireConnectProtocolHeader bool
+	queryDisabled                bool
 
 	// conditional holds per-procedure option functions registered with
 	// WithConditionalOptions. They are evaluated against each spec by forSpec.

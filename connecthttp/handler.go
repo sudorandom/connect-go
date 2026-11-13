@@ -38,6 +38,7 @@ type handler struct {
 	protocolHandlers map[string][]protocolHandler // Method to protocol handlers
 	allowMethod      string                       // Allow header
 	acceptPost       string                       // Accept-Post header
+	acceptQuery      string                       // Accept-Query header
 }
 
 // ServeHTTP implements [http.Handler].
@@ -64,7 +65,11 @@ func (h *handler) ServeHTTP(responseWriter http.ResponseWriter, request *http.Re
 		}
 	}
 	if protocolHandler == nil {
-		responseWriter.Header().Set("Accept-Post", h.acceptPost)
+		if request.Method == methodQuery {
+			responseWriter.Header().Set("Accept-Query", h.acceptQuery)
+		} else {
+			responseWriter.Header().Set("Accept-Post", h.acceptPost)
+		}
 		responseWriter.WriteHeader(http.StatusUnsupportedMediaType)
 		return
 	}
@@ -127,6 +132,7 @@ type handlerConfig struct {
 	Procedure                    string
 	Schema                       any
 	RequireConnectProtocolHeader bool
+	DisableQuery                 bool
 	IdempotencyLevel             connect.IdempotencyLevel
 	ReadMaxBytes                 int
 	SendMaxBytes                 int
@@ -160,6 +166,7 @@ func (c *handlerConfig) newProtocolHandlers() []protocolHandler {
 			ReadMaxBytes:                 c.ReadMaxBytes,
 			SendMaxBytes:                 c.SendMaxBytes,
 			RequireConnectProtocolHeader: c.RequireConnectProtocolHeader,
+			DisableQuery:                 c.DisableQuery,
 			IdempotencyLevel:             c.IdempotencyLevel,
 		}))
 	}

@@ -1291,7 +1291,7 @@ func (s *notModifiedPingServer) Ping(
 	info, _ := connect.CallInfoForServerContext(ctx)
 	ifNoneMatch := info.RequestHeader().Get("If-None-Match")
 	serverInfo, _ := connecthttp.ServerInfoForContext(ctx)
-	if serverInfo.HTTPMethod() == http.MethodGet && ifNoneMatch == s.etag {
+	if (serverInfo.HTTPMethod() == http.MethodGet || serverInfo.HTTPMethod() == "QUERY") && ifNoneMatch == s.etag {
 		info.ResponseHeader().Set("Etag", s.etag)
 		return nil, connecthttp.NewNotModifiedError()
 	}

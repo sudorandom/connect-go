@@ -35,6 +35,10 @@ import (
 	"connectrpc.com/connect/v2/internal/bufferpool"
 )
 
+// methodQuery is the HTTP QUERY method from RFC 10008. The standard library
+// has no constant for it.
+const methodQuery = "QUERY"
+
 const (
 	connectUnaryHeaderCompression           = "Content-Encoding"
 	connectUnaryHeaderAcceptCompression     = "Accept-Encoding"
@@ -74,6 +78,9 @@ func (*protocolConnect) NewHandler(params *protocolHandlerParams) protocolHandle
 
 	if params.spec.StreamType == connect.StreamTypeUnary && params.IdempotencyLevel == connect.IdempotencyNoSideEffects {
 		methods[http.MethodGet] = struct{}{}
+		if !params.DisableQuery {
+			methods[methodQuery] = struct{}{}
+		}
 	}
 
 	prefix := connectStreamingContentTypePrefix
@@ -410,13 +417,7 @@ func (c *connectClient) NewConn(
 			responseTrailer: make(http.Header),
 		}
 		if spec.IdempotencyLevel == connect.IdempotencyNoSideEffects {
-			unaryConn.marshaler.enableGet = c.EnableGet
-			unaryConn.marshaler.getURLMaxBytes = c.GetURLMaxBytes
-			unaryConn.marshaler.getUseFallback = c.GetUseFallback
-			unaryConn.marshaler.duplexCall = duplexCall
-			if stableCodec, ok := c.Codec.(connect.StableCodec); ok {
-				unaryConn.marshaler.stableCodec = stableCodec
-			}
+			unaryConn.marshaler.allowSafeMethods(&c.protocolClientParams, duplexCall)
 		}
 		conn = unaryConn
 		duplexCall.SetValidateResponse(unaryConn.validateResponse)
@@ -767,9 +768,9 @@ func (hc *connectUnaryHandlerConn) ResponseTrailer() http.Header {
 func (hc *connectUnaryHandlerConn) Close(err error) error {
 	if !hc.marshaler.wroteHeader {
 		hc.mergeResponseHeader()
-		// If the handler received a GET request and the resource hasn't changed,
-		// return a 304.
-		if hc.request.Method == http.MethodGet && IsNotModifiedError(err) {
+		// If the handler received a GET or QUERY request and the resource hasn't
+		// changed, return a 304.
+		if isCacheableMethod(hc.request.Method) && IsNotModifiedError(err) {
 			hc.responseWriter.WriteHeader(http.StatusNotModified)
 			return hc.request.Body.Close()
 		}
@@ -805,9 +806,9 @@ func (hc *connectUnaryHandlerConn) getHTTPMethod() string {
 
 func (hc *connectUnaryHandlerConn) mergeResponseHeader() {
 	header := hc.responseWriter.Header()
-	if hc.request.Method == http.MethodGet {
+	if isCacheableMethod(hc.request.Method) {
 		// The response content varies depending on the compression that the client
-		// requested (if any). GETs are potentially cacheable, so we should ensure
+		// requested (if any). GET and QUERY responses are potentially cacheable, so we should ensure
 		// that the Vary header includes at least Accept-Encoding (and not overwrite any values already set).
 		header[headerVary] = append(header[headerVary], connectUnaryHeaderAcceptCompression)
 	}
@@ -976,6 +977,9 @@ type connectUnaryMarshaler struct {
 	sendMaxBytes     int
 	wroteHeader      bool
 	stats            *connect.MessageStats
+
+	// deterministicCodec, if set, marshals messages instead of codec.
+	deterministicCodec connect.StableCodec
 }
 
 func (m *connectUnaryMarshaler) recordStats(size, compressedSize int) {
@@ -990,7 +994,11 @@ func (m *connectUnaryMarshaler) Marshal(message any) *connect.Error {
 		return m.write(nil)
 	}
 	uncompressed := bufferpool.Get()
-	if err := m.codec.MarshalWrite(m.ctx, uncompressed, message); err != nil {
+	marshalWrite := m.codec.MarshalWrite
+	if m.deterministicCodec != nil {
+		marshalWrite = m.deterministicCodec.MarshalWriteStable
+	}
+	if err := marshalWrite(m.ctx, uncompressed, message); err != nil {
 		return connect.Errorf(connect.CodeInternal, "marshal message: %s", err).WithCause(err)
 	}
 	defer bufferpool.Put(uncompressed)
@@ -1047,11 +1055,42 @@ type connectUnaryRequestMarshaler struct {
 	enableGet      bool
 	getURLMaxBytes int
 	getUseFallback bool
+	enableQuery    bool
 	stableCodec    connect.StableCodec
 	duplexCall     *duplexHTTPCall
 }
 
+// allowSafeMethods lets the marshaler send the request as GET or QUERY,
+// according to the client's options. Only calls to side-effect free procedures
+// may use them.
+func (m *connectUnaryRequestMarshaler) allowSafeMethods(params *protocolClientParams, duplexCall *duplexHTTPCall) {
+	m.enableGet = params.EnableGet
+	m.getURLMaxBytes = params.GetURLMaxBytes
+	m.getUseFallback = params.GetUseFallback
+	m.enableQuery = params.EnableQuery
+	m.duplexCall = duplexCall
+	stableCodec, ok := params.Codec.(connect.StableCodec)
+	if !ok {
+		return
+	}
+	m.stableCodec = stableCodec
+	if params.EnableQuery {
+		// QUERY responses are cached by request content, so serialize
+		// deterministically.
+		m.deterministicCodec = stableCodec
+	}
+}
+
 func (m *connectUnaryRequestMarshaler) Marshal(message any) *connect.Error {
+	if m.enableQuery {
+		// QUERY replaces POST, not GET: the method must be set before anything is
+		// written, and writeWithGet overrides it for requests that fit in a URL.
+		m.duplexCall.SetMethod(methodQuery)
+	}
+	return m.marshal(message)
+}
+
+func (m *connectUnaryRequestMarshaler) marshal(message any) *connect.Error {
 	if m.enableGet {
 		if m.stableCodec == nil && !m.getUseFallback {
 			return connect.Errorf(connect.CodeInternal, "codec %s doesn't support stable marshal; can't use get", m.codec.Name())
@@ -1422,6 +1461,13 @@ func queryValueReader(data string, base64Encoded bool) io.Reader {
 	return strings.NewReader(data)
 }
 
+// isCacheableMethod reports whether method is one of the safe methods that
+// Connect unary calls use, whose responses caches may store and which support
+// conditional requests.
+func isCacheableMethod(method string) bool {
+	return method == http.MethodGet || method == methodQuery
+}
+
 func connectValidateUnaryResponseContentType(
 	requestCodecName string,
 	httpMethod string,
@@ -1431,7 +1477,7 @@ func connectValidateUnaryResponseContentType(
 ) *connect.Error {
 	canonicalResponseContentType := canonicalizeContentType(responseContentType)
 	if statusCode != http.StatusOK {
-		if statusCode == http.StatusNotModified && httpMethod == http.MethodGet {
+		if statusCode == http.StatusNotModified && isCacheableMethod(httpMethod) {
 			return connect.Errorf(connect.CodeUnknown, "%s", errNotModifiedClient).WithCause(errNotModifiedClient).WithRemote()
 		}
 		// connect.Error responses must be JSON-encoded.
@@ -1498,7 +1544,7 @@ func connectCheckProtocolVersion(request *http.Request, required bool) *connect.
 		} else if version != "" && version != connectUnaryConnectQueryValue {
 			return connect.Errorf(connect.CodeInvalidArgument, "%s must be %q: got %q", connectUnaryConnectQueryParameter, connectUnaryConnectQueryValue, version)
 		}
-	case http.MethodPost:
+	case http.MethodPost, methodQuery:
 		version := getHeaderCanonical(request.Header, connectHeaderProtocolVersion)
 		if version == "" && required {
 			return connect.Errorf(connect.CodeInvalidArgument, "missing required header: set %s to %q", connectHeaderProtocolVersion, connectProtocolVersion)

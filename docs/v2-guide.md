@@ -375,7 +375,7 @@ func Mount(mux connecthttp.ServeMux, server *connect.Server, opts ...Option)
 
 `NewTransport` builds the client transport. `Mount` installs one `http.Handler` per registered procedure onto a mux, which is the per-procedure registration that [#924](https://github.com/connectrpc/connect-go/issues/924) asked for and lets Connect routes share a mux with sibling HTTP routes. It also installs a catch-all per service: RPC requests for unknown methods of a registered service route through `Server.Call`, failing with `CodeUnimplemented` unless a `SetUnknownHandler` fallback answers them. Non-RPC requests get a plain 404, and unknown services fall through to the mux.
 
-Both entry points share one `Option` type that covers protocol and codec selection, compression, message-size limits, and Connect GET support. Options that do not apply to a side are ignored, so passing a client-only option to `Mount` is harmless. In v1 these were core handler and client options; in v2 they live with the transport that reads them.
+Both entry points share one `Option` type that covers protocol and codec selection, compression, message-size limits, Connect GET support, and Connect HTTP QUERY support. Options that do not apply to a side are ignored, so passing a client-only option to `Mount` is harmless. In v1 these were core handler and client options; in v2 they live with the transport that reads them.
 
 ```go
 connecthttp.WithGRPC()                              // client only
@@ -383,6 +383,8 @@ connecthttp.WithReadMaxBytes(1024)
 connecthttp.WithSendMaxBytes(2048)
 connecthttp.WithCompressMinBytes(512)
 connecthttp.WithHTTPGet()                            // client only
+connecthttp.WithHTTPQuery()                          // client only
+connecthttp.WithoutHTTPQuery()                       // server only
 connecthttp.WithRequireConnectProtocolHeader()      // server only
 connecthttp.WithCodecs(connectproto.NewBinaryCodec(), connectproto.NewJSONCodec())
 connecthttp.WithCompressors(connectgzip.New())
@@ -639,7 +641,7 @@ type Compressor interface {
 
 The codec methods take a context for per-call values. The transport enforces the decompressed-size limit by wrapping the reader returned from `Decompress`, so a decompression bomb fails before it is fully materialized, closing the v1 gap where discard limits went unenforced on oversized messages ([#620](https://github.com/connectrpc/connect-go/issues/620)).
 
-A `StableCodec` extends `Codec` with `MarshalWriteStable`, a deterministic encoding for features such as Connect GET request URLs, plus `IsBinary` so a binary stable encoding can be text-encoded before it goes in a URL. This exports what was a private interface in v1.
+A `StableCodec` extends `Codec` with `MarshalWriteStable`, a deterministic encoding for features such as Connect GET request URLs and HTTP QUERY request bodies, plus `IsBinary` so a binary stable encoding can be text-encoded before it goes in a URL. This exports what was a private interface in v1.
 
 `connectproto` provides the protobuf binary and JSON codecs, and `connectgzip` provides gzip. The compression token names (`identity`, `gzip`, `br`, `zstd`) are defined in the core package so transports and compressor packages agree on them, while the core package itself ships no compressor.
 

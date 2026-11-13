@@ -195,13 +195,49 @@ func WithHTTPGet() Option {
 // limit works with most common proxies and CDNs.
 //
 // If fallback is set to true and the URL would be longer than the configured
-// maximum value, the request will be sent as an HTTP POST instead. If fallback
+// maximum value, the request will be sent as an HTTP POST instead, or as an
+// HTTP QUERY if [WithHTTPQuery] is also set. If fallback
 // is set to false, the request will fail with [connect.CodeResourceExhausted].
 //
 // By default, Connect-protocol clients with GET requests enabled may send a URL
 // of any size. [Mount] ignores this option.
 func WithHTTPGetMaxURLSize(bytes int, fallback bool) Option {
 	return getURLMaxBytesOption{max: bytes, fallback: fallback}
+}
+
+// WithHTTPQuery allows Connect-protocol clients to use the HTTP QUERY method
+// (RFC 10008) for side-effect free unary RPC calls. Typically, the service
+// schema indicates which procedures are idempotent. The gRPC and gRPC-Web
+// protocols are POST-only, so this option has no effect when combined with
+// [WithGRPC] or [WithGRPCWeb].
+//
+// A QUERY request is a POST request with a different method: it carries the
+// message in the request body, so it has no URL size limit. Unlike POST,
+// responses to QUERY requests are cacheable, and clients serialize messages
+// deterministically when the codec supports it, since caches key on the
+// request body.
+//
+// QUERY replaces POST, not GET. When [WithHTTPGet] is also set, requests that
+// can be sent as GET still are, and requests that [WithHTTPGetMaxURLSize]
+// would send as POST fall back to QUERY instead. Clients never retry a
+// rejected QUERY request as a POST, so only enable this option for servers
+// that support it.
+//
+// By default, all requests are made as HTTP POSTs. [Mount] ignores this option.
+func WithHTTPQuery() Option {
+	return enableQueryOption{}
+}
+
+// WithoutHTTPQuery stops handlers from accepting the HTTP QUERY method
+// (RFC 10008). By default, handlers accept QUERY requests for the same
+// procedures that accept GET requests: unary procedures with the
+// side-effect-free idempotency level. With this option, those procedures
+// respond to QUERY with 405 Method Not Allowed and an Allow header that omits
+// QUERY.
+//
+// [NewTransport] ignores this option.
+func WithoutHTTPQuery() Option {
+	return disableQueryOption{}
 }
 
 // WithConditionalOptions allows procedures to have different configurations.
@@ -272,6 +308,14 @@ func (o getURLMaxBytesOption) apply(opts *options) {
 	opts.getMaxURLBytes = o.max
 	opts.getUseFallback = o.fallback
 }
+
+type enableQueryOption struct{}
+
+func (enableQueryOption) apply(opts *options) { opts.queryEnabled = true }
+
+type disableQueryOption struct{}
+
+func (disableQueryOption) apply(opts *options) { opts.queryDisabled = true }
 
 type conditionalOption struct {
 	conditional func(connect.Spec) []Option

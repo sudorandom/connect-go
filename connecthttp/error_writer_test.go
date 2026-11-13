@@ -71,6 +71,17 @@ func TestErrorWriter(t *testing.T) {
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://localhost", nil)
 			assert.True(t, writer.IsSupported(req))
 		})
+		t.Run("ConnectUnaryQuery", func(t *testing.T) {
+			t.Parallel()
+			req := httptest.NewRequestWithContext(t.Context(), methodQuery, "http://localhost", nil)
+			req.Header.Set("Content-Type", connectUnaryContentTypePrefix+connect.CodecNameJSON)
+			assert.True(t, writer.IsSupported(req))
+			// QUERY is only for unary Connect.
+			req.Header.Set("Content-Type", connectStreamingContentTypePrefix+connect.CodecNameJSON)
+			assert.False(t, writer.IsSupported(req))
+			req.Header.Set("Content-Type", grpcContentTypeDefault)
+			assert.False(t, writer.IsSupported(req))
+		})
 		t.Run("ConnectStream", func(t *testing.T) {
 			t.Parallel()
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://localhost", nil)

@@ -38,7 +38,7 @@ const (
 )
 
 var (
-	// errNotModified signals Connect-protocol responses to GET requests to use the
+	// errNotModified signals Connect-protocol responses to GET and QUERY requests to use the
 	// 304 Not Modified HTTP error code.
 	errNotModified = errors.New("not modified")
 	// errNotModifiedClient wraps ErrNotModified for use client-side.
@@ -47,7 +47,7 @@ var (
 
 // NewNotModifiedError indicates that the requested resource hasn't changed. It
 // should be used only when handlers wish to respond to conditional HTTP GET
-// requests with a 304 Not Modified. In all other circumstances, including all
+// and QUERY requests with a 304 Not Modified. In all other circumstances, including all
 // RPCs using the gRPC or gRPC-Web protocols, it's equivalent to sending an
 // error with [connect.CodeUnknown]. Handlers should set Etag, Cache-Control,
 // or any other headers required by [RFC 9110 § 15.4.5] on the response header
@@ -63,7 +63,7 @@ func NewNotModifiedError() *connect.Error {
 // IsNotModifiedError checks whether the supplied error indicates that the
 // requested resource hasn't changed. It only returns true if the server used
 // [NewNotModifiedError] in response to a Connect-protocol RPC made with an
-// HTTP GET.
+// HTTP GET or QUERY.
 func IsNotModifiedError(err error) bool {
 	return errors.Is(err, errNotModified)
 }

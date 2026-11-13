@@ -105,6 +105,7 @@ func newServerHandlerConfig(spec connect.Spec, opts *options) *handlerConfig {
 		Procedure:                    spec.Procedure,
 		Schema:                       spec.Schema,
 		RequireConnectProtocolHeader: opts.requireConnectProtocolHeader,
+		DisableQuery:                 opts.queryDisabled,
 		IdempotencyLevel:             spec.IdempotencyLevel,
 		ReadMaxBytes:                 opts.readMaxBytes,
 		SendMaxBytes:                 opts.sendMaxBytes,
@@ -137,5 +138,6 @@ func newProcedureHandler(server *connect.Server, spec connect.Spec, opts *option
 		protocolHandlers: mappedMethodHandlers(protocolHandlers),
 		allowMethod:      sortedAllowMethodValue(protocolHandlers),
 		acceptPost:       sortedAcceptPostValue(protocolHandlers),
+		acceptQuery:      sortedAcceptQueryValue(protocolHandlers),
 	}
 }

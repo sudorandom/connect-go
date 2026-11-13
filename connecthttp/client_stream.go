@@ -214,5 +214,6 @@ func (t *transport) newProtocolClient(spec connect.Spec, opts *options) (protoco
 		EnableGet:        opts.getEnabled,
 		GetURLMaxBytes:   opts.getMaxURLBytes,
 		GetUseFallback:   opts.getUseFallback,
+		EnableQuery:      opts.queryEnabled,
 	})
 }
