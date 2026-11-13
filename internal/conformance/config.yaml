@@ -14,3 +14,4 @@ features:
     - COMPRESSION_IDENTITY
     - COMPRESSION_GZIP
   supportsTlsClientCerts: true
+  supportsConnectQuery: true
