@@ -27,6 +27,7 @@ import (
 
 	"connectrpc.com/connect/v2"
 	"connectrpc.com/connect/v2/connecthttp"
+	"connectrpc.com/connect/v2/connectproto"
 	"connectrpc.com/connect/v2/internal/assert"
 	pingv1 "connectrpc.com/connect/v2/internal/gen/connect/ping/v1"
 	"connectrpc.com/connect/v2/internal/gen/connect/ping/v1/pingv1connect"
@@ -463,4 +464,56 @@ func TestHTTPQueryNotModified(t *testing.T) {
 	assert.True(t, connecthttp.IsNotModifiedError(err))
 	condHTTPInfo, _ := condInfo.TransportInfo.(*connecthttp.ClientInfo)
 	assert.Equal(t, condHTTPInfo.HTTPMethod(), httpQueryMethod)
+}
+
+// recordingCodec counts which marshal method the transport calls.
+type recordingCodec struct {
+	*connectproto.BinaryCodec
+
+	mu     sync.Mutex
+	plain  int
+	stable int
+}
+
+func (c *recordingCodec) MarshalWrite(ctx context.Context, dst io.Writer, msg any) error {
+	c.mu.Lock()
+	c.plain++
+	c.mu.Unlock()
+	return c.BinaryCodec.MarshalWrite(ctx, dst, msg)
+}
+
+func (c *recordingCodec) MarshalWriteStable(ctx context.Context, dst io.Writer, msg any) error {
+	c.mu.Lock()
+	c.stable++
+	c.mu.Unlock()
+	return c.BinaryCodec.MarshalWriteStable(ctx, dst, msg)
+}
+
+func TestClientHTTPQueryStableEncoding(t *testing.T) {
+	t.Parallel()
+	server, _ := newQueryTestServer(t, &queryPingServer{})
+	call := func(t *testing.T, options ...connecthttp.Option) *recordingCodec {
+		t.Helper()
+		codec := &recordingCodec{BinaryCodec: connectproto.NewBinaryCodec()}
+		client := pingv1connect.NewPingServiceClient(connect.NewClient(connecthttp.NewTransport(
+			server.Client(),
+			server.URL(),
+			append([]connecthttp.Option{connecthttp.WithCodecs(codec)}, options...)...,
+		)))
+		_, err := client.Ping(t.Context(), &pingv1.PingRequest{Text: "stable"})
+		assert.Nil(t, err)
+		return codec
+	}
+	t.Run("query", func(t *testing.T) {
+		t.Parallel()
+		codec := call(t, connecthttp.WithHTTPQuery())
+		assert.Equal(t, codec.stable, 1)
+		assert.Equal(t, codec.plain, 0)
+	})
+	t.Run("post", func(t *testing.T) {
+		t.Parallel()
+		codec := call(t)
+		assert.Equal(t, codec.stable, 0)
+		assert.Equal(t, codec.plain, 1)
+	})
 }
